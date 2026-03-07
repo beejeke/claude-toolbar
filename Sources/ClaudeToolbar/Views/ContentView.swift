@@ -23,9 +23,7 @@ struct ContentView: View {
 
     private var headerView: some View {
         HStack(spacing: 8) {
-            Image(systemName: "brain")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.orange)
+            ClaudeLogoView(size: 18, color: .orange)
 
             Text("Claude Usage")
                 .font(.system(size: 14, weight: .semibold))
