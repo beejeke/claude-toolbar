@@ -46,8 +46,9 @@ struct ClaudeUsageData: Sendable {
 // MARK: - API Response Models
 
 struct Organization: Codable, Sendable {
-    let id: String
+    let uuid: String
     let name: String?
+    let capabilities: [String]?
 }
 
 /// Respuesta de /api/organizations/{id}/usage

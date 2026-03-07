@@ -24,8 +24,9 @@ enum ClaudeAPIError: LocalizedError {
 
 // MARK: - Service
 
-/// Hace peticiones a la API de claude.ai ejecutando XHR sincrono dentro de un
-/// tab de Safari que ya tiene la sesion activa. No necesita session key.
+/// Obtiene datos de la API de claude.ai abriendo un tab temporal en Safari
+/// (sin necesitar "Allow JavaScript from Apple Events").
+/// El tab se abre, carga el JSON y se cierra en ~1 segundo.
 actor ClaudeAPIService {
     static let shared = ClaudeAPIService()
 
@@ -38,14 +39,19 @@ actor ClaudeAPIService {
     // MARK: Public
 
     func fetchUsageData() async throws -> ClaudeUsageData {
-        let orgs = try await get("/api/organizations", as: [Organization].self)
-        guard let org = orgs.first else { throw ClaudeAPIError.noOrganization }
+        let orgs = try await fetch("/api/organizations", as: [Organization].self)
 
-        if let data = try? await get("/api/organizations/\(org.id)/usage", as: UsageResponse.self),
+        // Preferir la org con claude_pro; si no, la primera con chat
+        let org = orgs.first(where: { $0.capabilities?.contains("claude_pro") == true })
+                ?? orgs.first(where: { $0.capabilities?.contains("chat") == true })
+                ?? orgs.first
+        guard let org else { throw ClaudeAPIError.noOrganization }
+
+        if let data = try? await fetch("/api/organizations/\(org.uuid)/usage", as: UsageResponse.self),
            let parsed = parseUsageResponse(data) {
             return parsed
         }
-        if let data = try? await get("/api/organizations/\(org.id)/limits", as: LimitsResponse.self),
+        if let data = try? await fetch("/api/organizations/\(org.uuid)/limits", as: LimitsResponse.self),
            let parsed = parseLimitsResponse(data) {
             return parsed
         }
@@ -53,57 +59,72 @@ actor ClaudeAPIService {
     }
 
     func checkLoginStatus() async -> Bool {
-        (try? await get("/api/organizations", as: [Organization].self)) != nil
+        (try? await fetch("/api/organizations", as: [Organization].self)) != nil
     }
 
-    // MARK: XHR via Safari
+    // MARK: Safari tab navigation
 
-    private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        let js = "(function(){try{var x=new XMLHttpRequest();"
-               + "x.open('GET','\(path)',false);"
-               + "x.setRequestHeader('Accept','application/json');"
-               + "x.send(null);"
-               + "return ('000'+x.status.toString()).slice(-3)+x.responseText;"
-               + "}catch(e){return '000ERROR'}})()"
+    /// Abre un tab en la ventana de Safari que ya tiene claude.ai, navega a la
+    /// URL de la API, lee el JSON y cierra el tab. No requiere permisos especiales.
+    private func fetch<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+        let fullURL = "https://claude.ai\(path)"
 
         let script = """
-        tell application "Safari"
+        tell application "Safari" without activating
+            set claudeWin to missing value
             repeat with w in windows
                 if visible of w then
                     repeat with t in tabs of w
-                        if URL of t contains "claude.ai" and URL of t does not contain "/login" then
-                            try
-                                return do JavaScript "\(js)" in t
-                            end try
+                        if URL of t contains "claude.ai" then
+                            set claudeWin to w
+                            exit repeat
                         end if
                     end repeat
                 end if
+                if claudeWin is not missing value then exit repeat
             end repeat
-            return ""
+            if claudeWin is missing value then return "NO_WINDOW"
+            tell claudeWin
+                set apiTab to make new tab
+                set URL of apiTab to "\(fullURL)"
+            end tell
+            set i to 0
+            repeat while i < 12
+                delay 0.4
+                set src to source of apiTab
+                if src is not "" and src does not contain "<html" and src does not contain "<!DOCTYPE" then
+                    close apiTab
+                    return src
+                end if
+                set i to i + 1
+            end repeat
+            try
+                close apiTab
+            end try
+            return "TIMEOUT"
         end tell
         """
 
-        guard let raw = await runAppleScript(script), raw.count > 3 else {
+        guard let raw = await runAppleScript(script) else {
             throw ClaudeAPIError.noClaudeTabInSafari
         }
-
-        let statusCode = Int(raw.prefix(3)) ?? 0
-        let body = String(raw.dropFirst(3))
-
-        switch statusCode {
-        case 200...299:
-            guard let data = body.data(using: .utf8) else {
-                throw ClaudeAPIError.decodingError("UTF-8")
-            }
-            do {
-                return try decoder.decode(T.self, from: data)
-            } catch {
-                throw ClaudeAPIError.decodingError(error.localizedDescription)
-            }
-        case 401, 403:
+        if raw == "NO_WINDOW" || raw == "TIMEOUT" || raw.isEmpty {
+            throw ClaudeAPIError.noClaudeTabInSafari
+        }
+        // La API devuelve JSON directamente (no HTML)
+        // Si empieza con [ o { es JSON valido
+        guard raw.hasPrefix("[") || raw.hasPrefix("{") else {
+            // Podria ser la pagina de login (redireccion 302)
             throw ClaudeAPIError.notLoggedIn
-        default:
-            throw ClaudeAPIError.httpError(statusCode)
+        }
+
+        guard let data = raw.data(using: .utf8) else {
+            throw ClaudeAPIError.decodingError("UTF-8")
+        }
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw ClaudeAPIError.decodingError(error.localizedDescription)
         }
     }
 
