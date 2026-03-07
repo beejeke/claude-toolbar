@@ -1,0 +1,24 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+*.xcworkspace/
+
+# Xcode
+*.xcuserstate
+*.xcodeproj/xcuserdata/
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# App bundle (generado por make bundle)
+*.app
+
+# Secretos
+.env
+*.key
+
+# Logs
+*.log
