@@ -48,8 +48,7 @@ final class UsageViewModel: ObservableObject {
             return
         }
 
-        let controller = LoginWindowController()
-        controller.onLoginSuccess = { [weak self] sessionKey in
+        let controller = LoginWindowController { [weak self] sessionKey in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.loginWindowController = nil
