@@ -1,167 +1,312 @@
 import AppKit
-import WebKit
+import SwiftUI
 
-/// Ventana con WKWebView que carga claude.ai/login y extrae automaticamente
-/// la sessionKey al detectarla en las cookies tras el inicio de sesion.
+/// Ventana de login que abre el navegador del sistema (Safari/Chrome/etc)
+/// para evitar el bloqueo de Google en WKWebView embebidos.
+/// Guia al usuario para obtener la sessionKey desde DevTools.
 @MainActor
 final class LoginWindowController: NSWindowController {
 
     var onLoginSuccess: ((String) -> Void)?
+    private var hostingController: NSHostingController<LoginFlowView>?
 
-    private var webView: WKWebView!
-    private var progressBar: NSProgressIndicator!
-    private var statusLabel: NSTextField!
-
-    // MARK: Init
-
-    convenience init() {
+    convenience init(onSuccess: @escaping (String) -> Void) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 680),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Iniciar sesion en Claude"
+        window.title = "Conectar con Claude"
         window.center()
-        window.minSize = NSSize(width: 400, height: 500)
+        window.isReleasedWhenClosed = false
         self.init(window: window)
-        buildUI()
+        self.onLoginSuccess = onSuccess
+
+        let view = LoginFlowView { [weak self] key in
+            self?.onLoginSuccess?(key)
+            self?.close()
+        }
+        let hc = NSHostingController(rootView: view)
+        window.contentViewController = hc
+        window.setContentSize(hc.view.fittingSize)
+        hostingController = hc
+    }
+}
+
+// MARK: - SwiftUI View
+
+struct LoginFlowView: View {
+    let onSuccess: (String) -> Void
+
+    @State private var step: Step = .openBrowser
+    @State private var keyInput: String = ""
+    @State private var showKey: Bool = false
+    @State private var isValidating: Bool = false
+    @State private var validationError: String? = nil
+
+    enum Step {
+        case openBrowser, copyKey
     }
 
-    // MARK: UI Setup
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            headerView
 
-    private func buildUI() {
-        guard let contentView = window?.contentView else { return }
+            Divider()
 
-        // Barra de progreso superior
-        progressBar = NSProgressIndicator()
-        progressBar.style = .bar
-        progressBar.isIndeterminate = false
-        progressBar.minValue = 0
-        progressBar.maxValue = 1
-        progressBar.doubleValue = 0
-        progressBar.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(progressBar)
-
-        // WKWebView
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent() // sesion limpia cada vez
-        webView = WKWebView(frame: .zero, configuration: config)
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        webView.navigationDelegate = self
-        contentView.addSubview(webView)
-
-        // Label de estado
-        statusLabel = NSTextField(labelWithString: "Detectando sesion...")
-        statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.alignment = .center
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.isHidden = true
-        contentView.addSubview(statusLabel)
-
-        NSLayoutConstraint.activate([
-            progressBar.topAnchor.constraint(equalTo: contentView.topAnchor),
-            progressBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            progressBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            progressBar.heightAnchor.constraint(equalToConstant: 4),
-
-            webView.topAnchor.constraint(equalTo: progressBar.bottomAnchor),
-            webView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
-
-            statusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            statusLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            statusLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
-            statusLabel.heightAnchor.constraint(equalToConstant: 16)
-        ])
-
-        // Monitorear cookies
-        config.websiteDataStore.httpCookieStore.add(self)
-
-        // Cargar pagina de login
-        let loginURL = URL(string: "https://claude.ai/login")!
-        webView.load(URLRequest(url: loginURL))
+            // Content
+            Group {
+                if step == .openBrowser {
+                    openBrowserStep
+                } else {
+                    copyKeyStep
+                }
+            }
+            .padding(24)
+        }
+        .frame(width: 420)
     }
 
-    // MARK: Cookie detection
+    // MARK: Header
 
-    private func checkForSessionKey(in cookieStore: WKHTTPCookieStore) {
-        cookieStore.getAllCookies { [weak self] cookies in
-            guard let self else { return }
-            guard let sessionCookie = cookies.first(where: {
-                ($0.domain.contains("claude.ai") || $0.domain.contains("anthropic.com"))
-                    && $0.name == "sessionKey"
-            }) else { return }
+    private var headerView: some View {
+        HStack(spacing: 12) {
+            ClaudeLogoView(size: 28, color: .orange)
 
-            let key = sessionCookie.value
-            Task { @MainActor [weak self] in
-                self?.handleSuccessfulLogin(sessionKey: key)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Iniciar sesion en Claude")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(step == .openBrowser
+                     ? "Paso 1 de 2: Abre Claude en tu navegador"
+                     : "Paso 2 de 2: Copia tu session key")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Progress dots
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(step == .openBrowser ? Color.accentColor : Color.accentColor.opacity(0.4))
+                    .frame(width: 7, height: 7)
+                Circle()
+                    .fill(step == .copyKey ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    // MARK: Step 1 - Open browser
+
+    private var openBrowserStep: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Explicacion del problema
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(.blue)
+                    .font(.system(size: 14))
+                    .padding(.top, 1)
+                Text("El login con Google no funciona en ventanas embebidas por politica de seguridad de Google. Te abrimos tu navegador habitual donde si funciona.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(Color.blue.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            // Pasos
+            VStack(alignment: .leading, spacing: 10) {
+                stepRow(number: 1, text: "Haz clic en el boton para abrir Claude en tu navegador")
+                stepRow(number: 2, text: "Inicia sesion con tu cuenta de Google (o email)")
+                stepRow(number: 3, text: "Cuando hayas accedido, vuelve aqui para el paso 2")
+            }
+
+            // Boton principal
+            Button {
+                openBrowserAndAdvance()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "safari")
+                        .font(.system(size: 15))
+                    Text("Abrir Claude en el navegador")
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+    }
+
+    // MARK: Step 2 - Copy session key
+
+    private var copyKeyStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            // Instrucciones DevTools
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Abre las DevTools de tu navegador y copia la session key:")
+                    .font(.system(size: 12, weight: .medium))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    browserRow(icon: "safari", name: "Safari",
+                               instruction: "Develop → Show Web Inspector → Storage → Cookies")
+                    Divider()
+                    browserRow(icon: "globe", name: "Chrome / Brave",
+                               instruction: "F12 → Application → Cookies → https://claude.ai")
+                    Divider()
+                    browserRow(icon: "globe", name: "Firefox",
+                               instruction: "F12 → Storage → Cookies → https://claude.ai")
+                }
+                .padding(10)
+                .background(.quaternary.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                HStack(spacing: 4) {
+                    Text("Busca la cookie llamada")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text("sessionKey")
+                        .font(.system(size: 11, design: .monospaced))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                    Text("y copia su valor")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // Campo para pegar la key
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Pega aqui tu session key:")
+                    .font(.system(size: 12, weight: .medium))
+
+                HStack(spacing: 6) {
+                    Group {
+                        if showKey {
+                            TextField("sk-ant-...", text: $keyInput)
+                        } else {
+                            SecureField("sk-ant-...", text: $keyInput)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onChange(of: keyInput) { _ in
+                        validationError = nil
+                    }
+
+                    Button {
+                        showKey.toggle()
+                    } label: {
+                        Image(systemName: showKey ? "eye.slash" : "eye")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if let error = validationError {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .font(.system(size: 11))
+                        Text(error)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+
+            // Acciones
+            HStack {
+                Button("Volver al paso 1") {
+                    step = .openBrowser
+                    validationError = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+
+                Spacer()
+
+                if isValidating {
+                    ProgressView().scaleEffect(0.8)
+                }
+
+                Button("Conectar") {
+                    validateAndConnect()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(keyInput.trimmingCharacters(in: .whitespaces).isEmpty || isValidating)
             }
         }
     }
 
-    private func handleSuccessfulLogin(sessionKey: String) {
-        statusLabel.isHidden = false
-        statusLabel.stringValue = "Sesion detectada. Conectando..."
-        webView.isHidden = true
+    // MARK: Helpers
 
-        // Pequeña pausa visual antes de cerrar
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            guard let self else { return }
-            self.onLoginSuccess?(sessionKey)
-            self.close()
-        }
-    }
-}
-
-// MARK: - WKHTTPCookieStoreObserver
-
-extension LoginWindowController: WKHTTPCookieStoreObserver {
-    nonisolated func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-        Task { @MainActor [weak self] in
-            self?.checkForSessionKey(in: cookieStore)
-        }
-    }
-}
-
-// MARK: - WKNavigationDelegate
-
-extension LoginWindowController: WKNavigationDelegate {
-    nonisolated func webView(_ webView: WKWebView,
-                             didStartProvisionalNavigation navigation: WKNavigation!) {
-        Task { @MainActor [weak self] in
-            self?.progressBar.doubleValue = 0.1
+    private func openBrowserAndAdvance() {
+        NSWorkspace.shared.open(URL(string: "https://claude.ai/login")!)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            step = .copyKey
         }
     }
 
-    nonisolated func webView(_ webView: WKWebView,
-                             didCommit navigation: WKNavigation!) {
-        Task { @MainActor [weak self] in
-            self?.progressBar.doubleValue = 0.5
+    private func validateAndConnect() {
+        let key = keyInput.trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return }
+
+        // Validacion basica del formato
+        guard key.count > 20 else {
+            validationError = "La session key parece demasiado corta. Verifica que la hayas copiado completa."
+            return
+        }
+
+        isValidating = true
+        validationError = nil
+
+        // Breve delay visual antes de conectar
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            isValidating = false
+            onSuccess(key)
         }
     }
 
-    nonisolated func webView(_ webView: WKWebView,
-                             didFinish navigation: WKNavigation!) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.progressBar.doubleValue = 1.0
-            // Verificar cookies al terminar de cargar cada pagina
-            self.checkForSessionKey(in: webView.configuration.websiteDataStore.httpCookieStore)
-            // Ocultar barra tras un momento
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                self.progressBar.doubleValue = 0
+    private func stepRow(number: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Color.accentColor)
+                .clipShape(Circle())
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func browserRow(icon: String, name: String, instruction: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                    .font(.system(size: 11, weight: .medium))
+                Text(instruction)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    nonisolated func webView(_ webView: WKWebView,
-                             didFail navigation: WKNavigation!,
-                             withError error: Error) {
-        Task { @MainActor [weak self] in
-            self?.progressBar.doubleValue = 0
         }
     }
 }
