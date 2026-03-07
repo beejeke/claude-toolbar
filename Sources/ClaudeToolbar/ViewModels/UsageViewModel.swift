@@ -9,52 +9,34 @@ final class UsageViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var lastUpdated: Date?
-    @Published var showSettings = false
+    @Published var showLogin = false
 
     private var autoRefreshTask: Task<Void, Never>?
     private var loginWindowController: LoginWindowController?
-    private var sessionKeyObserver: NSObjectProtocol?
-    private let refreshInterval: UInt64 = 5 * 60 * 1_000_000_000 // 5 minutos en nanosegundos
-
-    var sessionKey: String {
-        UserDefaults.standard.string(forKey: "sessionKey") ?? ""
-    }
-
-    var hasSessionKey: Bool { !sessionKey.isEmpty }
+    private let refreshInterval: UInt64 = 5 * 60 * 1_000_000_000
 
     init() {
-        if hasSessionKey {
-            Task { await fetchData() }
-        } else {
-            showSettings = true
-        }
+        Task { await fetchData() }
         startAutoRefresh()
-        observeSessionKeyDetection()
     }
+
+    // MARK: Public
 
     func refresh() {
         Task { await fetchData() }
     }
 
-    func saveSessionKey(_ key: String) {
-        UserDefaults.standard.set(key, forKey: "sessionKey")
-        showSettings = false
-        Task { await fetchData() }
-    }
-
     func openLoginWindow() {
-        // Si ya hay una ventana abierta, la traemos al frente
         if let existing = loginWindowController {
             existing.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-
-        let controller = LoginWindowController { [weak self] sessionKey in
+        let controller = LoginWindowController { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.loginWindowController = nil
-                self.saveSessionKey(sessionKey)
+                self?.loginWindowController = nil
+                self?.showLogin = false
+                await self?.fetchData()
             }
         }
         loginWindowController = controller
@@ -65,23 +47,19 @@ final class UsageViewModel: ObservableObject {
     // MARK: Private
 
     private func fetchData() async {
-        guard hasSessionKey else {
-            showSettings = true
-            return
-        }
-
         isLoading = true
         errorMessage = nil
-
         do {
-            let data = try await ClaudeAPIService.shared.fetchUsageData(sessionKey: sessionKey)
+            let data = try await ClaudeAPIService.shared.fetchUsageData()
             sessionUsage = data.sessionUsage
-            weeklyUsage = data.weeklyUsage
-            lastUpdated = .now
+            weeklyUsage  = data.weeklyUsage
+            lastUpdated  = .now
+            showLogin = false
+        } catch ClaudeAPIError.notLoggedIn {
+            showLogin = true
         } catch {
             errorMessage = error.localizedDescription
         }
-
         isLoading = false
     }
 
@@ -95,25 +73,5 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
-    private func observeSessionKeyDetection() {
-        sessionKeyObserver = NotificationCenter.default.addObserver(
-            forName: .claudeSessionKeyDetected,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let key = notification.object as? String else { return }
-            Task { @MainActor [weak self] in
-                self?.loginWindowController?.close()
-                self?.loginWindowController = nil
-                self?.saveSessionKey(key)
-            }
-        }
-    }
-
-    deinit {
-        autoRefreshTask?.cancel()
-        if let observer = sessionKeyObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-    }
+    deinit { autoRefreshTask?.cancel() }
 }
