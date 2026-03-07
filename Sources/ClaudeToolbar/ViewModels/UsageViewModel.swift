@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 @MainActor
 final class UsageViewModel: ObservableObject {
@@ -11,6 +12,7 @@ final class UsageViewModel: ObservableObject {
     @Published var showSettings = false
 
     private var autoRefreshTask: Task<Void, Never>?
+    private var loginWindowController: LoginWindowController?
     private let refreshInterval: UInt64 = 5 * 60 * 1_000_000_000 // 5 minutos en nanosegundos
 
     var sessionKey: String {
@@ -36,6 +38,27 @@ final class UsageViewModel: ObservableObject {
         UserDefaults.standard.set(key, forKey: "sessionKey")
         showSettings = false
         Task { await fetchData() }
+    }
+
+    func openLoginWindow() {
+        // Si ya hay una ventana abierta, la traemos al frente
+        if let existing = loginWindowController {
+            existing.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let controller = LoginWindowController()
+        controller.onLoginSuccess = { [weak self] sessionKey in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.loginWindowController = nil
+                self.saveSessionKey(sessionKey)
+            }
+        }
+        loginWindowController = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: Private
