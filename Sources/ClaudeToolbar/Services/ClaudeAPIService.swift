@@ -3,171 +3,156 @@ import Foundation
 // MARK: - Errors
 
 enum ClaudeAPIError: LocalizedError {
-    case missingSessionKey
+    case noClaudeTabInSafari
+    case notLoggedIn
     case noOrganization
-    case unauthorized
-    case forbidden
     case noUsageData
     case httpError(Int)
     case decodingError(String)
 
     var errorDescription: String? {
         switch self {
-        case .missingSessionKey:    return "Session key no configurada"
-        case .noOrganization:       return "No se encontro ninguna organizacion"
-        case .unauthorized:         return "Session key invalida o expirada"
-        case .forbidden:            return "Acceso denegado por la API"
-        case .noUsageData:          return "No hay datos de uso disponibles"
-        case .httpError(let code):  return "Error HTTP \(code)"
-        case .decodingError(let m): return "Error de decodificacion: \(m)"
+        case .noClaudeTabInSafari: return "Abre claude.ai en Safari para ver tus datos"
+        case .notLoggedIn:         return "No has iniciado sesion en claude.ai"
+        case .noOrganization:      return "No se encontro ninguna organizacion"
+        case .noUsageData:         return "No hay datos de uso disponibles"
+        case .httpError(let c):    return "Error HTTP \(c)"
+        case .decodingError(let m): return "Error de datos: \(m)"
         }
     }
 }
 
 // MARK: - Service
 
+/// Hace peticiones a la API de claude.ai ejecutando XHR sincrono dentro de un
+/// tab de Safari que ya tiene la sesion activa. No necesita session key.
 actor ClaudeAPIService {
     static let shared = ClaudeAPIService()
 
-    private let baseURL = "https://claude.ai"
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
     }()
 
-    // MARK: Public API
+    // MARK: Public
 
-    func fetchUsageData(sessionKey: String) async throws -> ClaudeUsageData {
-        guard !sessionKey.isEmpty else { throw ClaudeAPIError.missingSessionKey }
-
-        let orgs = try await fetchOrganizations(sessionKey: sessionKey)
+    func fetchUsageData() async throws -> ClaudeUsageData {
+        let orgs = try await get("/api/organizations", as: [Organization].self)
         guard let org = orgs.first else { throw ClaudeAPIError.noOrganization }
 
-        return try await fetchUsage(orgId: org.id, sessionKey: sessionKey)
-    }
-
-    // MARK: Private
-
-    private func fetchOrganizations(sessionKey: String) async throws -> [Organization] {
-        let url = try makeURL("/api/organizations")
-        let data = try await request(url: url, sessionKey: sessionKey)
-        return try decode([Organization].self, from: data)
-    }
-
-    private func fetchUsage(orgId: String, sessionKey: String) async throws -> ClaudeUsageData {
-        // Intentamos el endpoint principal de usage
-        if let data = try? await request(url: try makeURL("/api/organizations/\(orgId)/usage"),
-                                         sessionKey: sessionKey),
-           let response = try? decode(UsageResponse.self, from: data),
-           let parsed = parseUsageResponse(response) {
+        if let data = try? await get("/api/organizations/\(org.id)/usage", as: UsageResponse.self),
+           let parsed = parseUsageResponse(data) {
             return parsed
         }
-
-        // Fallback: endpoint de limits
-        if let data = try? await request(url: try makeURL("/api/organizations/\(orgId)/limits"),
-                                         sessionKey: sessionKey),
-           let response = try? decode(LimitsResponse.self, from: data),
-           let parsed = parseLimitsResponse(response) {
+        if let data = try? await get("/api/organizations/\(org.id)/limits", as: LimitsResponse.self),
+           let parsed = parseLimitsResponse(data) {
             return parsed
         }
-
         throw ClaudeAPIError.noUsageData
     }
 
-    // MARK: Response Parsing
-
-    private func parseUsageResponse(_ response: UsageResponse) -> ClaudeUsageData? {
-        guard let ml = response.messageLimit else { return nil }
-
-        let used = ml.used ?? (ml.limit.map { $0 - (ml.remaining ?? 0) } ?? 0)
-        let limit = ml.limit ?? 100
-        let resetDate = parseDate(ml.resetAt)
-        let metric = UsageMetric(used: used, limit: limit, resetAt: resetDate)
-
-        let isWeekly = ml.windowDuration?.lowercased().contains("week") == true
-                    || ml.type?.lowercased().contains("week") == true
-
-        return ClaudeUsageData(
-            sessionUsage: isWeekly ? nil : metric,
-            weeklyUsage: isWeekly ? metric : nil
-        )
+    func checkLoginStatus() async -> Bool {
+        (try? await get("/api/organizations", as: [Organization].self)) != nil
     }
 
-    private func parseLimitsResponse(_ response: LimitsResponse) -> ClaudeUsageData? {
-        guard let limits = response.limits, !limits.isEmpty else { return nil }
+    // MARK: XHR via Safari
 
-        var sessionMetric: UsageMetric?
-        var weeklyMetric: UsageMetric?
+    private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+        let js = "(function(){try{var x=new XMLHttpRequest();"
+               + "x.open('GET','\(path)',false);"
+               + "x.setRequestHeader('Accept','application/json');"
+               + "x.send(null);"
+               + "return ('000'+x.status.toString()).slice(-3)+x.responseText;"
+               + "}catch(e){return '000ERROR'}})()"
 
-        for entry in limits {
-            let used = entry.used ?? 0
-            let limit = entry.limit ?? 100
-            let resetDate = parseDate(entry.resetAt)
-            let metric = UsageMetric(used: used, limit: limit, resetAt: resetDate)
+        let script = """
+        tell application "Safari"
+            repeat with w in windows
+                if visible of w then
+                    repeat with t in tabs of w
+                        if URL of t contains "claude.ai" and URL of t does not contain "/login" then
+                            try
+                                return do JavaScript "\(js)" in t
+                            end try
+                        end if
+                    end repeat
+                end if
+            end repeat
+            return ""
+        end tell
+        """
 
-            let isWeekly = entry.type?.lowercased().contains("week") == true
-            if isWeekly {
-                weeklyMetric = metric
-            } else {
-                sessionMetric = metric
+        guard let raw = await runAppleScript(script), raw.count > 3 else {
+            throw ClaudeAPIError.noClaudeTabInSafari
+        }
+
+        let statusCode = Int(raw.prefix(3)) ?? 0
+        let body = String(raw.dropFirst(3))
+
+        switch statusCode {
+        case 200...299:
+            guard let data = body.data(using: .utf8) else {
+                throw ClaudeAPIError.decodingError("UTF-8")
+            }
+            do {
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                throw ClaudeAPIError.decodingError(error.localizedDescription)
+            }
+        case 401, 403:
+            throw ClaudeAPIError.notLoggedIn
+        default:
+            throw ClaudeAPIError.httpError(statusCode)
+        }
+    }
+
+    // MARK: AppleScript
+
+    private func runAppleScript(_ source: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var error: NSDictionary?
+                guard let script = NSAppleScript(source: source) else {
+                    continuation.resume(returning: nil); return
+                }
+                let result = script.executeAndReturnError(&error)
+                guard error == nil else { continuation.resume(returning: nil); return }
+                continuation.resume(returning: result.stringValue)
             }
         }
-
-        guard sessionMetric != nil || weeklyMetric != nil else { return nil }
-        return ClaudeUsageData(sessionUsage: sessionMetric, weeklyUsage: weeklyMetric)
     }
 
-    // MARK: Helpers
+    // MARK: Parsing
 
-    private func makeURL(_ path: String) throws -> URL {
-        guard let url = URL(string: baseURL + path) else {
-            throw ClaudeAPIError.httpError(0)
-        }
-        return url
+    private func parseUsageResponse(_ r: UsageResponse) -> ClaudeUsageData? {
+        guard let ml = r.messageLimit else { return nil }
+        let used  = ml.used ?? ((ml.limit ?? 0) - (ml.remaining ?? 0))
+        let limit = ml.limit ?? 100
+        let metric = UsageMetric(used: used, limit: limit, resetAt: parseDate(ml.resetAt))
+        let isWeekly = ml.windowDuration?.lowercased().contains("week") == true
+                    || ml.type?.lowercased().contains("week") == true
+        return ClaudeUsageData(sessionUsage: isWeekly ? nil : metric,
+                               weeklyUsage:  isWeekly ? metric : nil)
     }
 
-    private func request(url: URL, sessionKey: String) async throws -> Data {
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        req.setValue("sessionKey=\(sessionKey)", forHTTPHeaderField: "Cookie")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            forHTTPHeaderField: "User-Agent"
-        )
-        req.setValue("web", forHTTPHeaderField: "anthropic-client-type")
-        req.timeoutInterval = 15
-
-        let (data, response) = try await URLSession.shared.data(for: req)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ClaudeAPIError.httpError(0)
+    private func parseLimitsResponse(_ r: LimitsResponse) -> ClaudeUsageData? {
+        guard let limits = r.limits, !limits.isEmpty else { return nil }
+        var session: UsageMetric?, weekly: UsageMetric?
+        for e in limits {
+            let m = UsageMetric(used: e.used ?? 0, limit: e.limit ?? 100, resetAt: parseDate(e.resetAt))
+            if e.type?.lowercased().contains("week") == true { weekly = m } else { session = m }
         }
-
-        switch http.statusCode {
-        case 200...299: return data
-        case 401: throw ClaudeAPIError.unauthorized
-        case 403: throw ClaudeAPIError.forbidden
-        default: throw ClaudeAPIError.httpError(http.statusCode)
-        }
+        guard session != nil || weekly != nil else { return nil }
+        return ClaudeUsageData(sessionUsage: session, weeklyUsage: weekly)
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        do {
-            return try decoder.decode(type, from: data)
-        } catch {
-            throw ClaudeAPIError.decodingError(error.localizedDescription)
-        }
-    }
-
-    private func parseDate(_ string: String?) -> Date? {
-        guard let string else { return nil }
+    private func parseDate(_ s: String?) -> Date? {
+        guard let s else { return nil }
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: string) { return d }
+        if let d = iso.date(from: s) { return d }
         iso.formatOptions = [.withInternetDateTime]
-        return iso.date(from: string)
+        return iso.date(from: s)
     }
 }
