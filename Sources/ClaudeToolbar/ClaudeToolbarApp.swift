@@ -34,8 +34,7 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "brain")
-                .symbolRenderingMode(.monochrome)
+            ClaudeLogoView(size: 16, color: .primary)
             Circle()
                 .fill(indicatorColor)
                 .frame(width: 6, height: 6)
