@@ -13,6 +13,7 @@ final class UsageViewModel: ObservableObject {
 
     private var autoRefreshTask: Task<Void, Never>?
     private var loginWindowController: LoginWindowController?
+    private var sessionKeyObserver: NSObjectProtocol?
     private let refreshInterval: UInt64 = 5 * 60 * 1_000_000_000 // 5 minutos en nanosegundos
 
     var sessionKey: String {
@@ -28,6 +29,7 @@ final class UsageViewModel: ObservableObject {
             showSettings = true
         }
         startAutoRefresh()
+        observeSessionKeyDetection()
     }
 
     func refresh() {
@@ -93,7 +95,25 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
+    private func observeSessionKeyDetection() {
+        sessionKeyObserver = NotificationCenter.default.addObserver(
+            forName: .claudeSessionKeyDetected,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let key = notification.object as? String else { return }
+            Task { @MainActor [weak self] in
+                self?.loginWindowController?.close()
+                self?.loginWindowController = nil
+                self?.saveSessionKey(key)
+            }
+        }
+    }
+
     deinit {
         autoRefreshTask?.cancel()
+        if let observer = sessionKeyObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 }
