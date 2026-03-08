@@ -69,6 +69,30 @@ struct CLIUsageData: Sendable {
     let currentSession: PeriodUsage?
     let todayTotal: PeriodUsage?
     let weekTotal: PeriodUsage?
+    let dailyHistory: [DailyUsage]  // últimos 7 días, orden ascendente (index 0 = más antiguo)
+}
+
+// MARK: - Daily History
+
+struct DailyUsage: Sendable, Identifiable {
+    let date: Date          // inicio del día (startOfDay)
+    let usage: PeriodUsage
+
+    var id: TimeInterval { date.timeIntervalSince1970 }
+
+    var dayLabel: String {
+        DailyUsage.dayFormatter.string(from: date)
+    }
+
+    var isToday: Bool {
+        Calendar.current.isDateInToday(date)
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f
+    }()
 }
 
 // MARK: - Model Pricing (USD por token, precios publicos API de Anthropic)

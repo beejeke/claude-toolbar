@@ -6,6 +6,7 @@ final class UsageViewModel: ObservableObject {
     @Published var currentSession: PeriodUsage?
     @Published var todayTotal: PeriodUsage?
     @Published var weekTotal: PeriodUsage?
+    @Published var dailyHistory: [DailyUsage] = []
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
@@ -41,6 +42,7 @@ final class UsageViewModel: ObservableObject {
         currentSession = data.currentSession
         todayTotal     = data.todayTotal
         weekTotal      = data.weekTotal
+        dailyHistory   = data.dailyHistory
         lastUpdated    = .now
         isLoading = false
     }

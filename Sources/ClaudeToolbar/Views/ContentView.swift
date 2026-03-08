@@ -63,6 +63,11 @@ struct ContentView: View {
                 UsageCardView(title: "Últimos 7 días", icon: "calendar",
                               usage: viewModel.weekTotal, color: .purple,
                               outputLimit: viewModel.weeklyOutputLimit)
+
+                if !viewModel.dailyHistory.isEmpty {
+                    Divider()
+                    DailyHistoryChartView(days: viewModel.dailyHistory)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)

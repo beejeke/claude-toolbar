@@ -10,7 +10,7 @@ actor CLIUsageService {
     func fetchUsageData() async -> CLIUsageData {
         let entries = readAllEntries()
         guard !entries.isEmpty else {
-            return CLIUsageData(currentSession: nil, todayTotal: nil, weekTotal: nil)
+            return CLIUsageData(currentSession: nil, todayTotal: nil, weekTotal: nil, dailyHistory: [])
         }
 
         let now = Date.now
@@ -25,10 +25,26 @@ actor CLIUsageService {
         let todayEntries = entries.filter { ($0.timestamp ?? .distantPast) >= startOfToday }
         let weekEntries  = entries.filter { ($0.timestamp ?? .distantPast) >= startOfWeek }
 
+        // Historial diario: últimos 7 días calendario, orden ascendente
+        let emptyUsage = PeriodUsage(
+            inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
+            messageCount: 0, sessionCount: 0, model: nil, startTime: nil, lastActivity: nil
+        )
+        let dailyHistory: [DailyUsage] = (0..<7).map { offset in
+            let dayStart = cal.date(byAdding: .day, value: -(6 - offset), to: startOfToday) ?? startOfToday
+            let dayEnd   = cal.date(byAdding: .day, value: 1, to: dayStart) ?? startOfToday
+            let dayEntries = entries.filter {
+                guard let ts = $0.timestamp else { return false }
+                return ts >= dayStart && ts < dayEnd
+            }
+            return DailyUsage(date: dayStart, usage: dayEntries.isEmpty ? emptyUsage : aggregate(dayEntries))
+        }
+
         return CLIUsageData(
             currentSession: currentSession,
             todayTotal:     todayEntries.isEmpty ? nil : aggregate(todayEntries),
-            weekTotal:      weekEntries.isEmpty  ? nil : aggregate(weekEntries)
+            weekTotal:      weekEntries.isEmpty  ? nil : aggregate(weekEntries),
+            dailyHistory:   dailyHistory
         )
     }
 
