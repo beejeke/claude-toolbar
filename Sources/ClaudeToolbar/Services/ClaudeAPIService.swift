@@ -10,8 +10,9 @@ actor CLIUsageService {
     func fetchUsageData() async -> CLIUsageData {
         let entries = readAllEntries()
         guard !entries.isEmpty else {
-            return CLIUsageData(currentSession: nil, todayTotal: nil, weekTotal: nil,
-                                dailyHistory: [], sessionTokensPerHour: nil, rateLimitInfo: nil)
+            return CLIUsageData(currentSession: nil, windowUsage: nil, todayTotal: nil,
+                                weekTotal: nil, dailyHistory: [], sessionTokensPerHour: nil,
+                                rateLimitInfo: nil, calibratedWindowLimit: nil)
         }
 
         let now = Date.now
@@ -24,7 +25,7 @@ actor CLIUsageService {
         let sessionBlock  = currentActivityBlock(from: entries)
         let currentSession = sessionBlock.map { aggregate($0) }
 
-        // Burn rate: tokens/hora de la sesión activa.
+        // Burn rate: tokens/hora de la sesión activa (usa realTokens = input + output).
         // Solo se calcula si la última actividad fue hace < 30 min y hay al menos 5 min de datos.
         let sessionTokensPerHour: Double? = sessionBlock.flatMap { block -> Double? in
             let timestamps = block.compactMap(\.timestamp)
@@ -34,9 +35,17 @@ actor CLIUsageService {
             else { return nil }
             let elapsedHours = last.timeIntervalSince(first) / 3600
             guard elapsedHours >= 5.0 / 60.0 else { return nil }  // mínimo 5 min de datos
-            let outputTokens = block.reduce(0) { $0 + $1.outputTokens }
-            return Double(outputTokens) / elapsedHours
+            let realTokens = block.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }
+            return Double(realTokens) / elapsedHours
         }
+
+        // Ventana real de Claude Code:
+        // NO es un rolling de 5h desde ahora. Claude arranca una ventana de 5h exactas
+        // desde el primer mensaje enviado; la siguiente ventana comienza solo cuando llega
+        // un mensaje tras haber expirado la ventana anterior.
+        // Detectamos el inicio real escaneando todos los timestamps en orden.
+        let windowStartTime = detectWindowStart(from: entries)
+        let windowEntries   = entries.filter { ($0.timestamp ?? .distantPast) >= windowStartTime }
 
         let todayEntries = entries.filter { ($0.timestamp ?? .distantPast) >= startOfToday }
         let weekEntries  = entries.filter { ($0.timestamp ?? .distantPast) >= startOfWeek }
@@ -56,13 +65,32 @@ actor CLIUsageService {
             return DailyUsage(date: dayStart, usage: dayEntries.isEmpty ? emptyUsage : aggregate(dayEntries))
         }
 
+        let rateLimitInfo = readLatestRateLimitInfo()
+
+        // Calibrar el límite de ventana desde el último evento de rate limit.
+        // Cuando se alcanza el límite, los tokens acumulados en esa ventana ≈ el límite real del plan.
+        // Esto funciona independientemente del plan contratado: se auto-detecta desde los datos.
+        let calibratedWindowLimit: Int? = rateLimitInfo.flatMap { rl -> Int? in
+            let entriesUpToHit = entries.filter { ($0.timestamp ?? .distantPast) <= rl.hitAt }
+            guard !entriesUpToHit.isEmpty else { return nil }
+            let windowAtHitStart = detectWindowStart(from: entriesUpToHit)
+            let hitWindowEntries = entries.filter {
+                guard let ts = $0.timestamp else { return false }
+                return ts >= windowAtHitStart && ts <= rl.hitAt
+            }
+            let total = hitWindowEntries.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }
+            return total > 10_000 ? total : nil
+        }
+
         return CLIUsageData(
-            currentSession:       currentSession,
-            todayTotal:           todayEntries.isEmpty ? nil : aggregate(todayEntries),
-            weekTotal:            weekEntries.isEmpty  ? nil : aggregate(weekEntries),
-            dailyHistory:         dailyHistory,
-            sessionTokensPerHour: sessionTokensPerHour,
-            rateLimitInfo:        readLatestRateLimitInfo()
+            currentSession:        currentSession,
+            windowUsage:           windowEntries.isEmpty ? nil : aggregate(windowEntries),
+            todayTotal:            todayEntries.isEmpty  ? nil : aggregate(todayEntries),
+            weekTotal:             weekEntries.isEmpty   ? nil : aggregate(weekEntries),
+            dailyHistory:          dailyHistory,
+            sessionTokensPerHour:  sessionTokensPerHour,
+            rateLimitInfo:         rateLimitInfo,
+            calibratedWindowLimit: calibratedWindowLimit
         )
     }
 
@@ -127,6 +155,33 @@ actor CLIUsageService {
             ))
         }
         return entries
+    }
+
+    // MARK: - Window detection
+
+    /// Detecta el inicio real de la ventana activa de 5 horas.
+    ///
+    /// Claude inicia una ventana de exactamente 5 horas al primer mensaje enviado.
+    /// La siguiente ventana solo comienza cuando el usuario envía un mensaje DESPUÉS
+    /// de que la ventana anterior haya expirado (gap > 5h entre mensajes consecutivos).
+    ///
+    /// Este método escanea todos los timestamps en orden y devuelve el momento en que
+    /// comenzó la ventana más reciente.
+    private func detectWindowStart(from entries: [Entry]) -> Date {
+        let windowDuration: TimeInterval = 5 * 3600
+        let timestamps = entries.compactMap(\.timestamp).sorted()
+        guard let first = timestamps.first else {
+            return Date.now.addingTimeInterval(-windowDuration)
+        }
+
+        var windowStart = first
+        for ts in timestamps {
+            if ts > windowStart.addingTimeInterval(windowDuration) {
+                // Este mensaje llega tras expirar la ventana anterior → nueva ventana
+                windowStart = ts
+            }
+        }
+        return windowStart
     }
 
     // MARK: - Session detection

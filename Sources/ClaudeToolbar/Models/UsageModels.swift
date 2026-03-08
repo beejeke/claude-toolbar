@@ -31,9 +31,11 @@ struct PeriodUsage: Sendable {
              + Double(cacheReadTokens)     * p.cacheReadPerToken
     }
 
+    /// Porcentaje de uso respecto al límite.
+    /// Usa realTokens (input + output) porque Claude cuenta todos los tokens procesados.
     func percentOfLimit(_ limit: Int) -> Double {
         guard limit > 0 else { return 0 }
-        return min(1.0, Double(outputTokens) / Double(limit))
+        return min(1.0, Double(realTokens) / Double(limit))
     }
 
     var formattedRealTokens: String {
@@ -67,12 +69,18 @@ struct PeriodUsage: Sendable {
 
 struct CLIUsageData: Sendable {
     let currentSession: PeriodUsage?
+    /// Tokens en la ventana deslizante actual (últimas 5 horas) — el límite real de Claude Code.
+    let windowUsage: PeriodUsage?
     let todayTotal: PeriodUsage?
     let weekTotal: PeriodUsage?
     let dailyHistory: [DailyUsage]
     let sessionTokensPerHour: Double?
     /// Último evento de rate limit detectado en los JSONL (nil si nunca se ha alcanzado).
     let rateLimitInfo: RateLimitInfo?
+    /// Límite de ventana auto-calibrado desde el último rate limit real.
+    /// Cuando el usuario alcanzó el límite, los tokens consumidos en esa ventana = el límite del plan.
+    /// nil = nunca se ha alcanzado el límite (sin datos para calibrar).
+    let calibratedWindowLimit: Int?
 }
 
 // MARK: - Rate Limit Info
@@ -99,15 +107,15 @@ struct RateLimitInfo: Sendable {
 
 struct BurnRate: Sendable {
     let tokensPerHour: Double
-    /// Horas hasta agotar el límite diario. nil = límite ya superado.
-    let hoursToDaily: Double?
+    /// Horas hasta agotar la ventana de 5h. nil = ventana ya agotada.
+    let hoursToWindow: Double?
     /// Horas hasta agotar el límite semanal. nil = límite ya superado.
     let hoursToWeekly: Double?
 
-    /// Alerta si el límite diario se alcanza en menos de 2 horas.
-    var isDailyWarning: Bool {
-        guard let h = hoursToDaily else { return false }
-        return h < 2
+    /// Alerta si la ventana se agota en menos de 1 hora.
+    var isWindowWarning: Bool {
+        guard let h = hoursToWindow else { return false }
+        return h < 1
     }
 
     var formattedRate: String {
@@ -116,8 +124,8 @@ struct BurnRate: Sendable {
         return "\(t)/h"
     }
 
-    var formattedTimeToDaily: String? {
-        guard let h = hoursToDaily, h > 0 else { return nil }
+    var formattedTimeToWindow: String? {
+        guard let h = hoursToWindow, h > 0 else { return nil }
         return formatHours(h)
     }
 
@@ -186,21 +194,23 @@ enum SubscriptionPlan: Sendable {
         }
     }
 
-    /// Límite diario de output tokens aproximado según el plan.
-    var defaultDailyOutputLimit: Int {
+    /// Límite de tokens totales (input + output) por ventana de 5 horas.
+    /// Fuente: datos publicados por Anthropic (~44K total para Pro).
+    var defaultWindowOutputLimit: Int {
         switch self {
-        case .pro:   return 150_000
-        case .max5:  return 375_000
-        case .max20: return 750_000
+        case .pro:   return 44_000
+        case .max5:  return 88_000
+        case .max20: return 220_000
         }
     }
 
-    /// Límite semanal de output tokens aproximado según el plan.
+    /// Límite semanal de tokens totales (input + output) aproximado según el plan.
+    /// Derivado: ~35 ventanas/semana × límite de ventana.
     var defaultWeeklyOutputLimit: Int {
         switch self {
-        case .pro:   return 750_000
-        case .max5:  return 1_875_000
-        case .max20: return 3_750_000
+        case .pro:   return 1_540_000
+        case .max5:  return 3_080_000
+        case .max20: return 7_700_000
         }
     }
 }

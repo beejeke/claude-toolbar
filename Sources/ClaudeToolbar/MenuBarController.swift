@@ -6,10 +6,12 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let popover: NSPopover
     let viewModel: UsageViewModel
+    let localization: LocalizationManager
     private var eventMonitor: Any?
 
     init() {
-        viewModel = UsageViewModel()
+        viewModel    = UsageViewModel()
+        localization = LocalizationManager()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         popover = NSPopover()
         popover.behavior = .applicationDefined
@@ -18,6 +20,7 @@ final class MenuBarController {
         let hostingController = NSHostingController(
             rootView: ContentView()
                 .environmentObject(viewModel)
+                .environmentObject(localization)
         )
         popover.contentViewController = hostingController
         popover.contentSize = NSSize(width: 340, height: hostingController.view.fittingSize.height)

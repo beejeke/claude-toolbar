@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class UsageViewModel: ObservableObject {
     @Published var currentSession: PeriodUsage?
+    @Published var windowUsage: PeriodUsage?
     @Published var todayTotal: PeriodUsage?
     @Published var weekTotal: PeriodUsage?
     @Published var dailyHistory: [DailyUsage] = []
@@ -12,16 +13,23 @@ final class UsageViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
+    /// Límite de ventana calibrado automáticamente desde el último rate limit observado en JSONL.
+    /// Cuando existe, refleja el límite REAL del plan del usuario (auto-detectado sin API).
+    @Published private(set) var calibratedWindowLimit: Int?
+
+    /// Límite efectivo para la barra de progreso: calibrado si disponible, manual si no.
+    var effectiveWindowLimit: Int { calibratedWindowLimit ?? windowOutputLimit }
+
     /// Plan detectado automáticamente desde el Keychain de Claude Code CLI.
     @Published private(set) var subscriptionPlan: SubscriptionPlan = .pro
 
-    // Límites de output tokens configurables por periodo.
+    // Límites de output tokens configurables.
     // Se inicializan con los valores del plan detectado y se persisten en UserDefaults
     // si el usuario los sobreescribe manualmente.
-    @Published var dailyOutputLimit: Int {
+    @Published var windowOutputLimit: Int {
         didSet {
-            UserDefaults.standard.set(dailyOutputLimit, forKey: "dailyOutputLimit")
-            UserDefaults.standard.set(true, forKey: "dailyLimitOverridden")
+            UserDefaults.standard.set(windowOutputLimit, forKey: "windowOutputLimit")
+            UserDefaults.standard.set(true, forKey: "windowLimitOverridden")
         }
     }
     @Published var weeklyOutputLimit: Int {
@@ -46,13 +54,13 @@ final class UsageViewModel: ObservableObject {
 
         // Usar límite guardado solo si el usuario lo sobreescribió manualmente;
         // de lo contrario, aplicar los valores del plan detectado.
-        let dailyOverridden  = UserDefaults.standard.bool(forKey: "dailyLimitOverridden")
+        let windowOverridden = UserDefaults.standard.bool(forKey: "windowLimitOverridden")
         let weeklyOverridden = UserDefaults.standard.bool(forKey: "weeklyLimitOverridden")
 
-        let storedDaily  = UserDefaults.standard.integer(forKey: "dailyOutputLimit")
+        let storedWindow = UserDefaults.standard.integer(forKey: "windowOutputLimit")
         let storedWeekly = UserDefaults.standard.integer(forKey: "weeklyOutputLimit")
 
-        dailyOutputLimit  = (dailyOverridden  && storedDaily  > 0) ? storedDaily  : plan.defaultDailyOutputLimit
+        windowOutputLimit = (windowOverridden && storedWindow > 0) ? storedWindow : plan.defaultWindowOutputLimit
         weeklyOutputLimit = (weeklyOverridden && storedWeekly > 0) ? storedWeekly : plan.defaultWeeklyOutputLimit
 
         // Notificaciones: activadas por defecto; respetar preferencia si ya fue guardada
@@ -65,22 +73,22 @@ final class UsageViewModel: ObservableObject {
 
     private func computeBurnRate(tokensPerHour: Double?) -> BurnRate? {
         guard let rate = tokensPerHour, rate > 0 else { return nil }
-        let todayUsed   = todayTotal?.outputTokens ?? 0
-        let weekUsed    = weekTotal?.outputTokens  ?? 0
-        let remDaily    = Double(dailyOutputLimit  - todayUsed)
-        let remWeekly   = Double(weeklyOutputLimit - weekUsed)
+        let windowUsed  = windowUsage?.realTokens ?? 0
+        let weekUsed    = weekTotal?.realTokens   ?? 0
+        let remWindow   = Double(effectiveWindowLimit - windowUsed)
+        let remWeekly   = Double(weeklyOutputLimit    - weekUsed)
         return BurnRate(
-            tokensPerHour: rate,
-            hoursToDaily:  remDaily  > 0 ? remDaily  / rate : nil,
-            hoursToWeekly: remWeekly > 0 ? remWeekly / rate : nil
+            tokensPerHour:  rate,
+            hoursToWindow:  remWindow  > 0 ? remWindow  / rate : nil,
+            hoursToWeekly:  remWeekly  > 0 ? remWeekly  / rate : nil
         )
     }
 
     /// Descarta cualquier override manual y vuelve a los límites del plan detectado.
     func resetLimitsToDetectedPlan() {
-        UserDefaults.standard.removeObject(forKey: "dailyLimitOverridden")
+        UserDefaults.standard.removeObject(forKey: "windowLimitOverridden")
         UserDefaults.standard.removeObject(forKey: "weeklyLimitOverridden")
-        dailyOutputLimit  = subscriptionPlan.defaultDailyOutputLimit
+        windowOutputLimit = subscriptionPlan.defaultWindowOutputLimit
         weeklyOutputLimit = subscriptionPlan.defaultWeeklyOutputLimit
     }
 
@@ -91,20 +99,22 @@ final class UsageViewModel: ObservableObject {
     private func fetchData() async {
         isLoading = true
         let data = await CLIUsageService.shared.fetchUsageData()
-        currentSession = data.currentSession
-        todayTotal     = data.todayTotal
-        weekTotal      = data.weekTotal
-        dailyHistory   = data.dailyHistory
-        burnRate       = computeBurnRate(tokensPerHour: data.sessionTokensPerHour)
-        rateLimitInfo  = data.rateLimitInfo
-        lastUpdated    = .now
-        isLoading      = false
+        currentSession        = data.currentSession
+        windowUsage           = data.windowUsage
+        todayTotal            = data.todayTotal
+        weekTotal             = data.weekTotal
+        dailyHistory          = data.dailyHistory
+        burnRate              = computeBurnRate(tokensPerHour: data.sessionTokensPerHour)
+        rateLimitInfo         = data.rateLimitInfo
+        calibratedWindowLimit = data.calibratedWindowLimit
+        lastUpdated           = .now
+        isLoading             = false
 
         // Comprobar umbrales y enviar notificaciones si corresponde
         if notificationsEnabled {
             NotificationService.checkAndNotify(
-                dailyUsed:   data.todayTotal?.outputTokens  ?? 0,
-                dailyLimit:  dailyOutputLimit,
+                dailyUsed:   data.windowUsage?.realTokens ?? 0,
+                dailyLimit:  effectiveWindowLimit,
                 weeklyUsed:  data.weekTotal?.outputTokens   ?? 0,
                 weeklyLimit: weeklyOutputLimit
             )

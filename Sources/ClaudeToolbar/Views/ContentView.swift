@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var viewModel: UsageViewModel
+    @EnvironmentObject private var lm: LocalizationManager
     @State private var showSettings = false
 
     var body: some View {
@@ -39,7 +40,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 13)).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain).help("Actualizar (Cmd+R)")
+                    .buttonStyle(.plain).help(lm.s(.refresh))
                     .keyboardShortcut("r", modifiers: .command)
                 }
             }
@@ -52,12 +53,12 @@ struct ContentView: View {
                     .foregroundStyle(showSettings ? Color.secondary : Color.secondary)
             }
             .buttonStyle(.plain)
-            .help(showSettings ? "Cerrar ajustes" : "Ajustes")
+            .help(showSettings ? lm.s(.settingsClose) : lm.s(.settingsOpen))
 
             Button { NSApplication.shared.terminate(nil) } label: {
                 Image(systemName: "power").font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain).help("Salir")
+            .buttonStyle(.plain).help(lm.s(.quit))
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
@@ -69,7 +70,7 @@ struct ContentView: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(Color.orange.opacity(0.12), in: Capsule())
-            .help("Plan detectado desde Keychain · Límites: \(viewModel.dailyOutputLimit / 1000)K/día, \(viewModel.weeklyOutputLimit / 1000)K/semana")
+            .help("Plan detectado desde Keychain · Ventana 5h: \(viewModel.windowOutputLimit / 1000)K, Semana: \(viewModel.weeklyOutputLimit / 1000)K")
     }
 
     // MARK: Content
@@ -77,27 +78,29 @@ struct ContentView: View {
     private var scrollContent: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
-                // Sesion actual (sin barra de %, la sesion puede ser larga y span multiples dias)
-                UsageCardView(title: "Sesión actual", icon: "clock.fill",
+                UsageCardView(title: lm.s(.currentSession), icon: "clock.fill",
                               usage: viewModel.currentSession, color: .blue,
                               outputLimit: nil)
 
                 Divider()
 
-                // Hoy — con barra de % del limite diario + burn rate
-                UsageCardView(title: "Hoy", icon: "sun.max.fill",
-                              usage: viewModel.todayTotal, color: .orange,
-                              outputLimit: viewModel.dailyOutputLimit,
-                              burnRate: viewModel.burnRate)
+                UsageCardView(title: lm.s(.windowFiveH), icon: "timer",
+                              usage: viewModel.windowUsage, color: .orange,
+                              outputLimit: viewModel.effectiveWindowLimit,
+                              burnRate: viewModel.burnRate,
+                              todayTotal: viewModel.todayTotal,
+                              isCalibrated: viewModel.calibratedWindowLimit != nil)
 
                 Divider()
 
-                // Semana — con barra de % del limite semanal
-                UsageCardView(title: "Últimos 7 días", icon: "calendar",
+                UsageCardView(title: lm.s(.lastSevenDays), icon: "calendar",
                               usage: viewModel.weekTotal, color: .purple,
                               outputLimit: viewModel.weeklyOutputLimit)
 
-                if let rl = viewModel.rateLimitInfo {
+                // Solo mostrar el banner si el rate limit ocurrió en la ventana activa actual (< 5h).
+                // Si pasó hace más de 5h, la ventana ya se reseteó y el dato es obsoleto.
+                if let rl = viewModel.rateLimitInfo,
+                   Date.now.timeIntervalSince(rl.hitAt) < 5 * 3600 {
                     Divider()
                     rateLimitBanner(rl)
                 }
@@ -122,15 +125,16 @@ struct ContentView: View {
     private func rateLimitBanner(_ rl: RateLimitInfo) -> some View {
         let isToday = rl.wasHitToday
         let accent: Color = isToday ? .red : .secondary
+        let hitLabel = isToday ? lm.s(.rateLimitToday) : lm.s(.rateLimitPast)
         return HStack(spacing: 6) {
             Image(systemName: isToday ? "exclamationmark.octagon.fill" : "clock.arrow.circlepath")
                 .font(.system(size: 10))
                 .foregroundStyle(accent)
             VStack(alignment: .leading, spacing: 1) {
-                Text(isToday ? "Límite alcanzado \(rl.relativeHitAt)" : "Último límite \(rl.relativeHitAt)")
+                Text("\(hitLabel) \(rl.relativeHitAt)")
                     .font(.system(size: 10, weight: isToday ? .semibold : .regular))
                     .foregroundStyle(isToday ? Color.primary : Color.secondary)
-                Text("Se restablece: \(rl.resetText)")
+                Text("\(lm.s(.rateLimitResets)) \(rl.resetText)")
                     .font(.system(size: 10))
                     .foregroundStyle(isToday ? Color.secondary : Color.primary.opacity(0.3))
             }
@@ -142,7 +146,7 @@ struct ContentView: View {
     private var noDataView: some View {
         HStack(spacing: 6) {
             Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(.secondary)
-            Text("Ejecuta `claude` en la terminal para ver tu uso")
+            Text(lm.s(.noDataMessage))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
@@ -150,11 +154,11 @@ struct ContentView: View {
 
     private var bottomBar: some View {
         HStack {
-            Text("Ref. API: precios Anthropic públicos")
+            Text(lm.s(.apiRefNote))
                 .font(.system(size: 9)).foregroundStyle(.quaternary)
             Spacer()
             if let lastUpdated = viewModel.lastUpdated {
-                Text("Actualizado \(lastUpdated, style: .relative)")
+                Text("\(lm.s(.lastUpdated)) \(lastUpdated, style: .relative)")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
