@@ -10,7 +10,8 @@ actor CLIUsageService {
     func fetchUsageData() async -> CLIUsageData {
         let entries = readAllEntries()
         guard !entries.isEmpty else {
-            return CLIUsageData(currentSession: nil, todayTotal: nil, weekTotal: nil, dailyHistory: [])
+            return CLIUsageData(currentSession: nil, todayTotal: nil, weekTotal: nil,
+                                dailyHistory: [], sessionTokensPerHour: nil)
         }
 
         let now = Date.now
@@ -20,7 +21,22 @@ actor CLIUsageService {
 
         // Sesion actual: bloque de actividad continua mas reciente.
         // Se considera "nueva sesion" cuando hay un gap > 30 min entre mensajes consecutivos.
-        let currentSession = currentActivityBlock(from: entries).map { aggregate($0) }
+        let sessionBlock  = currentActivityBlock(from: entries)
+        let currentSession = sessionBlock.map { aggregate($0) }
+
+        // Burn rate: tokens/hora de la sesión activa.
+        // Solo se calcula si la última actividad fue hace < 30 min y hay al menos 5 min de datos.
+        let sessionTokensPerHour: Double? = sessionBlock.flatMap { block -> Double? in
+            let timestamps = block.compactMap(\.timestamp)
+            guard let first = timestamps.min(),
+                  let last  = timestamps.max(),
+                  now.timeIntervalSince(last) < 30 * 60   // sesion activa
+            else { return nil }
+            let elapsedHours = last.timeIntervalSince(first) / 3600
+            guard elapsedHours >= 5.0 / 60.0 else { return nil }  // mínimo 5 min de datos
+            let outputTokens = block.reduce(0) { $0 + $1.outputTokens }
+            return Double(outputTokens) / elapsedHours
+        }
 
         let todayEntries = entries.filter { ($0.timestamp ?? .distantPast) >= startOfToday }
         let weekEntries  = entries.filter { ($0.timestamp ?? .distantPast) >= startOfWeek }
@@ -41,10 +57,11 @@ actor CLIUsageService {
         }
 
         return CLIUsageData(
-            currentSession: currentSession,
-            todayTotal:     todayEntries.isEmpty ? nil : aggregate(todayEntries),
-            weekTotal:      weekEntries.isEmpty  ? nil : aggregate(weekEntries),
-            dailyHistory:   dailyHistory
+            currentSession:       currentSession,
+            todayTotal:           todayEntries.isEmpty ? nil : aggregate(todayEntries),
+            weekTotal:            weekEntries.isEmpty  ? nil : aggregate(weekEntries),
+            dailyHistory:         dailyHistory,
+            sessionTokensPerHour: sessionTokensPerHour
         )
     }
 

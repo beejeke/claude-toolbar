@@ -63,10 +63,11 @@ struct ContentView: View {
 
                 Divider()
 
-                // Hoy — con barra de % del limite diario
+                // Hoy — con barra de % del limite diario + burn rate
                 UsageCardView(title: "Hoy", icon: "sun.max.fill",
                               usage: viewModel.todayTotal, color: .orange,
-                              outputLimit: viewModel.dailyOutputLimit)
+                              outputLimit: viewModel.dailyOutputLimit,
+                              burnRate: viewModel.burnRate)
 
                 Divider()
 

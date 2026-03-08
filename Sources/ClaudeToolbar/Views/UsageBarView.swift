@@ -10,6 +10,8 @@ struct UsageCardView: View {
     let color: Color
     /// Limite de output_tokens para calcular el porcentaje. nil = no muestra barra.
     let outputLimit: Int?
+    /// Burn rate de la sesión activa. nil = no muestra predicción.
+    var burnRate: BurnRate? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -18,6 +20,9 @@ struct UsageCardView: View {
                 metricsRow(usage)
                 if let limit = outputLimit {
                     progressRow(usage, limit: limit)
+                }
+                if let br = burnRate {
+                    burnRateRow(br)
                 }
                 footerRow(usage)
             } else {
@@ -99,6 +104,28 @@ struct UsageCardView: View {
                 Text("\(usedTokens) / \(limitStr) tok")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func burnRateRow(_ br: BurnRate) -> some View {
+        let accent: Color = br.isDailyWarning ? .red : .orange
+        return HStack(spacing: 5) {
+            Image(systemName: "flame.fill")
+                .font(.system(size: 9))
+                .foregroundStyle(accent)
+            Text(br.formattedRate)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(accent)
+            Spacer()
+            if let timeLeft = br.formattedTimeToDaily {
+                Text("límite en \(timeLeft)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(br.isDailyWarning ? Color.red : Color.secondary)
+            } else {
+                Text("límite superado")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.red)
             }
         }
     }

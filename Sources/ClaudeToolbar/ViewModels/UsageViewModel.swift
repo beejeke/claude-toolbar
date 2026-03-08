@@ -7,6 +7,7 @@ final class UsageViewModel: ObservableObject {
     @Published var todayTotal: PeriodUsage?
     @Published var weekTotal: PeriodUsage?
     @Published var dailyHistory: [DailyUsage] = []
+    @Published var burnRate: BurnRate?
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
@@ -52,6 +53,19 @@ final class UsageViewModel: ObservableObject {
         startAutoRefresh()
     }
 
+    private func computeBurnRate(tokensPerHour: Double?) -> BurnRate? {
+        guard let rate = tokensPerHour, rate > 0 else { return nil }
+        let todayUsed   = todayTotal?.outputTokens ?? 0
+        let weekUsed    = weekTotal?.outputTokens  ?? 0
+        let remDaily    = Double(dailyOutputLimit  - todayUsed)
+        let remWeekly   = Double(weeklyOutputLimit - weekUsed)
+        return BurnRate(
+            tokensPerHour: rate,
+            hoursToDaily:  remDaily  > 0 ? remDaily  / rate : nil,
+            hoursToWeekly: remWeekly > 0 ? remWeekly / rate : nil
+        )
+    }
+
     /// Descarta cualquier override manual y vuelve a los límites del plan detectado.
     func resetLimitsToDetectedPlan() {
         UserDefaults.standard.removeObject(forKey: "dailyLimitOverridden")
@@ -71,6 +85,7 @@ final class UsageViewModel: ObservableObject {
         todayTotal     = data.todayTotal
         weekTotal      = data.weekTotal
         dailyHistory   = data.dailyHistory
+        burnRate       = computeBurnRate(tokensPerHour: data.sessionTokensPerHour)
         lastUpdated    = .now
         isLoading = false
     }

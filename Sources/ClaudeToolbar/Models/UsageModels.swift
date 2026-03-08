@@ -70,6 +70,48 @@ struct CLIUsageData: Sendable {
     let todayTotal: PeriodUsage?
     let weekTotal: PeriodUsage?
     let dailyHistory: [DailyUsage]  // últimos 7 días, orden ascendente (index 0 = más antiguo)
+    /// Velocidad de la sesión activa (nil si sesión inactiva o < 5 min de datos).
+    let sessionTokensPerHour: Double?
+}
+
+// MARK: - Burn Rate
+
+struct BurnRate: Sendable {
+    let tokensPerHour: Double
+    /// Horas hasta agotar el límite diario. nil = límite ya superado.
+    let hoursToDaily: Double?
+    /// Horas hasta agotar el límite semanal. nil = límite ya superado.
+    let hoursToWeekly: Double?
+
+    /// Alerta si el límite diario se alcanza en menos de 2 horas.
+    var isDailyWarning: Bool {
+        guard let h = hoursToDaily else { return false }
+        return h < 2
+    }
+
+    var formattedRate: String {
+        let t = Int(tokensPerHour)
+        if t >= 1_000 { return String(format: "%.1fK/h", Double(t) / 1_000) }
+        return "\(t)/h"
+    }
+
+    var formattedTimeToDaily: String? {
+        guard let h = hoursToDaily, h > 0 else { return nil }
+        return formatHours(h)
+    }
+
+    var formattedTimeToWeekly: String? {
+        guard let h = hoursToWeekly, h > 0 else { return nil }
+        return formatHours(h)
+    }
+
+    private func formatHours(_ h: Double) -> String {
+        let totalMin = Int(h * 60)
+        if totalMin < 60 { return "~\(totalMin)m" }
+        let hrs  = totalMin / 60
+        let mins = totalMin % 60
+        return mins > 0 ? "~\(hrs)h \(mins)m" : "~\(hrs)h"
+    }
 }
 
 // MARK: - Daily History
