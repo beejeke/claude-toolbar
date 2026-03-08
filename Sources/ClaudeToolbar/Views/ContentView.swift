@@ -7,11 +7,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             headerView
             Divider()
-            if viewModel.showLogin {
-                loginPrompt
-            } else {
-                mainContent
-            }
+            scrollContent
         }
         .frame(width: 340)
         .background(Color(NSColor.windowBackgroundColor))
@@ -22,7 +18,7 @@ struct ContentView: View {
     private var headerView: some View {
         HStack(spacing: 8) {
             ClaudeLogoView(size: 18, color: .orange)
-            Text("Claude Usage").font(.system(size: 14, weight: .semibold))
+            Text("Claude Code").font(.system(size: 14, weight: .semibold))
             Spacer()
 
             if viewModel.isLoading {
@@ -36,78 +32,70 @@ struct ContentView: View {
                 .keyboardShortcut("r", modifiers: .command)
             }
 
-            quitButton
+            Button { NSApplication.shared.terminate(nil) } label: {
+                Image(systemName: "power").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain).help("Salir")
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
 
-    private var quitButton: some View {
-        Button { NSApplication.shared.terminate(nil) } label: {
-            Image(systemName: "power").font(.system(size: 12)).foregroundStyle(.secondary)
+    // MARK: Content
+
+    private var scrollContent: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 10) {
+                // Sesion actual (sin barra de %, la sesion puede ser larga y span multiples dias)
+                UsageCardView(title: "Sesión actual", icon: "clock.fill",
+                              usage: viewModel.currentSession, color: .blue,
+                              outputLimit: nil)
+
+                Divider()
+
+                // Hoy — con barra de % del limite diario
+                UsageCardView(title: "Hoy", icon: "sun.max.fill",
+                              usage: viewModel.todayTotal, color: .orange,
+                              outputLimit: viewModel.dailyOutputLimit)
+
+                Divider()
+
+                // Semana — con barra de % del limite semanal
+                UsageCardView(title: "Últimos 7 días", icon: "calendar",
+                              usage: viewModel.weekTotal, color: .purple,
+                              outputLimit: viewModel.weeklyOutputLimit)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if viewModel.currentSession == nil && !viewModel.isLoading {
+                noDataView
+            }
+
+            Divider()
+            bottomBar
         }
-        .buttonStyle(.plain).help("Salir")
     }
 
-    // MARK: Login prompt
-
-    private var loginPrompt: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "person.crop.circle.badge.exclamationmark")
-                .font(.system(size: 32)).foregroundStyle(.secondary)
-            Text("No has iniciado sesion en Claude")
-                .font(.system(size: 13, weight: .medium))
-            Text("Abre Safari con claude.ai para ver tus datos de uso.")
+    private var noDataView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("Ejecuta `claude` en la terminal para ver tu uso")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Iniciar sesion con Safari") {
-                viewModel.openLoginWindow()
-            }
-            .buttonStyle(.borderedProminent)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16).padding(.vertical, 8)
     }
 
-    // MARK: Main content
-
-    private var mainContent: some View {
-        VStack(spacing: 16) {
-            if let error = viewModel.errorMessage {
-                errorBanner(error)
-            }
-
-            VStack(spacing: 12) {
-                UsageBarView(title: "Sesion actual", icon: "clock.fill",
-                             metric: viewModel.sessionUsage, color: .blue)
-                Divider().padding(.horizontal, -16)
-                UsageBarView(title: "Uso semanal", icon: "calendar",
-                             metric: viewModel.weeklyUsage, color: .purple)
-            }
-
-            if let lastUpdated = viewModel.lastUpdated {
-                HStack {
-                    Spacer()
-                    Text("Actualizado \(lastUpdated, style: .relative)")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .padding(16)
-    }
-
-    // MARK: Error banner
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13)).foregroundStyle(.orange)
-            Text(message).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+    private var bottomBar: some View {
+        HStack {
+            // Nota sobre coste de referencia
+            Text("Ref. API: precios Anthropic públicos")
+                .font(.system(size: 9)).foregroundStyle(.quaternary)
             Spacer()
-            Button("Reintentar") { viewModel.refresh() }
-                .buttonStyle(.borderedProminent).controlSize(.mini)
+            if let lastUpdated = viewModel.lastUpdated {
+                Text("Actualizado \(lastUpdated, style: .relative)")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
         }
-        .padding(10)
-        .background(Color.orange.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 16).padding(.vertical, 8)
     }
 }

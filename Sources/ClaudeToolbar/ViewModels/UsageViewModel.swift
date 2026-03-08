@@ -1,72 +1,54 @@
 import Foundation
 import SwiftUI
-import AppKit
 
 @MainActor
 final class UsageViewModel: ObservableObject {
-    @Published var sessionUsage: UsageMetric?
-    @Published var weeklyUsage: UsageMetric?
+    @Published var currentSession: PeriodUsage?
+    @Published var todayTotal: PeriodUsage?
+    @Published var weekTotal: PeriodUsage?
     @Published var isLoading = false
-    @Published var errorMessage: String?
     @Published var lastUpdated: Date?
-    @Published var showLogin = false
+
+    // Limites configurables de tokens de salida (output_tokens) por periodo.
+    // Base: suscripcion Claude Code Pro — ajusta segun tu uso habitual.
+    @Published var dailyOutputLimit: Int {
+        didSet { UserDefaults.standard.set(dailyOutputLimit, forKey: "dailyOutputLimit") }
+    }
+    @Published var weeklyOutputLimit: Int {
+        didSet { UserDefaults.standard.set(weeklyOutputLimit, forKey: "weeklyOutputLimit") }
+    }
 
     private var autoRefreshTask: Task<Void, Never>?
-    private var loginWindowController: LoginWindowController?
-    private let refreshInterval: UInt64 = 5 * 60 * 1_000_000_000
+    private let refreshInterval: UInt64 = 60 * 1_000_000_000
 
     init() {
+        let daily  = UserDefaults.standard.integer(forKey: "dailyOutputLimit")
+        let weekly = UserDefaults.standard.integer(forKey: "weeklyOutputLimit")
+        dailyOutputLimit  = daily  > 0 ? daily  : 150_000
+        weeklyOutputLimit = weekly > 0 ? weekly : 750_000
+
         Task { await fetchData() }
         startAutoRefresh()
     }
-
-    // MARK: Public
 
     func refresh() {
         Task { await fetchData() }
     }
 
-    func openLoginWindow() {
-        if let existing = loginWindowController {
-            existing.showWindow(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        let controller = LoginWindowController { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.loginWindowController = nil
-                self?.showLogin = false
-                await self?.fetchData()
-            }
-        }
-        loginWindowController = controller
-        controller.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    // MARK: Private
-
     private func fetchData() async {
         isLoading = true
-        errorMessage = nil
-        do {
-            let data = try await ClaudeAPIService.shared.fetchUsageData()
-            sessionUsage = data.sessionUsage
-            weeklyUsage  = data.weeklyUsage
-            lastUpdated  = .now
-            showLogin = false
-        } catch ClaudeAPIError.notLoggedIn {
-            showLogin = true
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        let data = await CLIUsageService.shared.fetchUsageData()
+        currentSession = data.currentSession
+        todayTotal     = data.todayTotal
+        weekTotal      = data.weekTotal
+        lastUpdated    = .now
         isLoading = false
     }
 
     private func startAutoRefresh() {
         autoRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: self?.refreshInterval ?? 300_000_000_000)
+                try? await Task.sleep(nanoseconds: self?.refreshInterval ?? 60_000_000_000)
                 guard !Task.isCancelled else { break }
                 await self?.fetchData()
             }
