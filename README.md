@@ -1,7 +1,7 @@
 # Claude Toolbar
 
 > **Real-time Claude Code usage tracker for your macOS menu bar.**
-> Zero configuration · No API keys · No network calls · Reads local files only.
+> Zero configuration · No API keys · Auto-detects your subscription plan · Reads local files only.
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue?style=flat-square)
 ![Swift 6](https://img.shields.io/badge/Swift-6-orange?style=flat-square)
@@ -13,7 +13,7 @@
 
 ```
 ╔══════════════════════════════════════════╗
-║  🟠 Claude Code                    ↻  ⏻ ║
+║  🟠 Claude Code  [Pro]             ↻  ⏻ ║
 ╠══════════════════════════════════════════╣
 ║  🕐 Current session           just now  ║
 ║                                          ║
@@ -35,6 +35,10 @@
 ║  █████████████████░░  54%               ║
 ║  404.2K / 750K tok · 824 calls           ║
 ╠══════════════════════════════════════════╣
+║  📊 Daily history                        ║
+║   ▂  ▅  █  ▃  ▁  ▄  ▇                   ║
+║  Mon Tue Wed Thu Fri Sat Sun             ║
+╠══════════════════════════════════════════╣
 ║  API ref: public Anthropic pricing       ║
 ║                          updated 1s ago  ║
 ╚══════════════════════════════════════════╝
@@ -48,8 +52,9 @@
 |--------|--------------|
 | **Tokens generated** | `output_tokens` — what Claude actually wrote. The real measure of work done. |
 | **API cost ref.** | Estimated cost at public Anthropic pricing. Useful even on a Pro subscription as a consumption reference. |
-| **Usage %** | Today and weekly progress bars vs configurable limits. |
+| **Usage %** | Today and weekly progress bars vs your plan's default limits (auto-detected). |
 | **Call count** | Number of Claude API interactions per period. |
+| **Daily history** | Mini bar chart of output tokens per day for the last 7 days. |
 
 > **Why not total tokens?** `cache_read_input_tokens` inflate the count massively (they represent the same cached context re-read on every call — not new work). Claude Toolbar shows only `input + output` as the meaningful total, and excludes cache-read from the display. Cache tokens are still included in the cost reference since they have a real per-token cost.
 
@@ -110,25 +115,28 @@ No login, no API key, no configuration needed.
 ## How it works
 
 ```
-~/.claude/projects/**/*.jsonl
-          │
-          │  (local file read — no network)
-          ▼
-  CLIUsageService (Swift actor)
-    ├─ reads all .jsonl session files
-    ├─ parses assistant messages with usage fields
-    └─ aggregates: current session / today / last 7 days
-          │
-          ▼
-  UsageViewModel (@MainActor)
-    └─ refreshes every 60 seconds
-          │
-          ▼
-  Menu Bar Popover (SwiftUI)
-    └─ tokens + cost + % progress bars
+~/.claude/projects/**/*.jsonl     macOS Keychain
+          │                             │
+          │  (local file read)          │  (SecItemCopyMatching)
+          ▼                             ▼
+  CLIUsageService (Swift actor)   KeychainCredentialsService
+    ├─ reads all .jsonl files        └─ reads subscriptionType
+    ├─ parses assistant messages          from Claude Code credentials
+    └─ aggregates by period                    │
+          │                                    │
+          └──────────────┬─────────────────────┘
+                         ▼
+              UsageViewModel (@MainActor)
+                ├─ applies plan limits (Pro / Max5 / Max20)
+                └─ refreshes every 60 seconds
+                         │
+                         ▼
+              Menu Bar Popover (SwiftUI)
+                ├─ tokens + cost + % progress bars
+                └─ 7-day daily bar chart
 ```
 
-Claude Code writes every API interaction to `~/.claude/projects/<project>/<session>.jsonl`. Each assistant entry contains a `usage` object with exact token counts. Claude Toolbar reads these files directly.
+Claude Code writes every API interaction to `~/.claude/projects/<project>/<session>.jsonl`. Each assistant entry contains a `usage` object with exact token counts. Claude Toolbar reads these files directly — no network calls, no authentication.
 
 **Token fields used:**
 
@@ -151,21 +159,43 @@ Claude Code writes every API interaction to `~/.claude/projects/<project>/<sessi
 
 ---
 
-## Configure usage limits
+## Auto plan detection
 
-The % bars compare your `output_tokens` against configurable limits. Defaults are sized for a heavy daily Claude Code user:
+Claude Toolbar automatically detects your subscription plan by reading the `Claude Code-credentials` entry the CLI stores in your macOS Keychain. No manual setup needed.
 
-| Period | Default |
-|--------|---------|
-| Daily | 150,000 output tokens |
-| Weekly | 750,000 output tokens |
+| Plan | Daily limit | Weekly limit |
+|------|------------|--------------|
+| **Pro** | 150,000 output tokens | 750,000 output tokens |
+| **Max 5×** | 375,000 output tokens | 1,875,000 output tokens |
+| **Max 20×** | 750,000 output tokens | 3,750,000 output tokens |
 
-Adjust via Terminal (settings UI coming soon):
+The detected plan name is shown as a badge in the popover header. If you upgrade or change plans, the limits update automatically on the next app launch.
+
+### Manual override
+
+You can override the detected limits at any time:
 
 ```bash
 defaults write com.claudetoolbar.menubar dailyOutputLimit  -int 200000
 defaults write com.claudetoolbar.menubar weeklyOutputLimit -int 1000000
 ```
+
+To restore auto-detected plan defaults, delete the override keys:
+
+```bash
+defaults delete com.claudetoolbar.menubar dailyOutputLimit
+defaults delete com.claudetoolbar.menubar weeklyOutputLimit
+```
+
+---
+
+## 7-day bar chart
+
+The daily history chart at the bottom of the popover shows one bar per day for the last 7 calendar days. Bar heights are proportional to that day's output tokens — the tallest bar represents the peak day.
+
+- **Today's bar** is highlighted
+- **Click any bar** to see the exact token count and API cost reference for that day
+- **Hover** for a native macOS tooltip
 
 ---
 
@@ -185,7 +215,7 @@ Claude Toolbar is designed to have **zero impact** on your Mac:
 
 ## Privacy & Security
 
-- **No credentials** — reads only session files already on your disk
+- **No credentials stored** — reads only the subscription type from Keychain (the same entry the CLI manages), never the OAuth tokens
 - **No network** — zero outbound connections, ever
 - **No sandbox** — required to access `~/.claude/` (standard for menu bar utilities)
 - **Open source** — every line of code is auditable here
@@ -201,23 +231,24 @@ claude-toolbar/
 ├── Package.swift
 ├── Makefile
 └── Sources/ClaudeToolbar/
-    ├── main.swift                    # AppKit entry point (no @main, no sandbox)
+    ├── main.swift                        # AppKit entry point
     ├── AppDelegate.swift
-    ├── MenuBarController.swift       # NSStatusItem + NSPopover + Claude logo
+    ├── MenuBarController.swift           # NSStatusItem + NSPopover + Claude logo
     ├── Models/
-    │   └── UsageModels.swift         # PeriodUsage · CLIUsageData · ModelPricing
+    │   └── UsageModels.swift             # PeriodUsage · DailyUsage · SubscriptionPlan · CLIUsageData
     ├── Services/
-    │   └── ClaudeAPIService.swift    # Reads ~/.claude/projects/**/*.jsonl
+    │   ├── ClaudeAPIService.swift        # Reads ~/.claude/projects/**/*.jsonl
+    │   └── KeychainCredentialsService.swift  # Reads plan from macOS Keychain
     ├── ViewModels/
-    │   └── UsageViewModel.swift      # @MainActor · auto-refresh every 60s
+    │   └── UsageViewModel.swift          # @MainActor · plan detection · auto-refresh
     └── Views/
-        ├── ContentView.swift         # Main popover layout
-        ├── UsageBarView.swift        # UsageCardView with progress bar
-        ├── ClaudeLogoView.swift      # Claude logo built in SwiftUI
-        └── SettingsView.swift
+        ├── ContentView.swift             # Main popover layout
+        ├── UsageBarView.swift            # UsageCardView with progress bar
+        ├── DailyHistoryChartView.swift   # 7-day bar chart
+        └── ClaudeLogoView.swift          # Claude logo built in SwiftUI
 ```
 
-**Stack:** Swift 6 · SwiftUI · AppKit · Swift Package Manager · macOS 13+
+**Stack:** Swift 6 · SwiftUI · AppKit · Security.framework · Swift Package Manager · macOS 13+
 
 ---
 
@@ -233,9 +264,9 @@ rm -rf /Applications/ClaudeToolbar.app
 ## Contributing
 
 1. Fork the repo
-2. Branch from `develop`: `git checkout -b feature/your-feature develop`
+2. Branch from `main`: `git checkout -b feature/your-feature`
 3. Make your changes
-4. Open a PR → `develop`
+4. Open a PR → `main`
 
 Commit style: `feat:`, `fix:`, `chore:`, `docs:`
 
