@@ -2,97 +2,94 @@ import Foundation
 
 // MARK: - Domain Models
 
-struct UsageMetric: Sendable {
-    let used: Int
-    let limit: Int
-    let resetAt: Date?
+/// Resumen de uso real de tokens para un periodo (sesion, hoy, semana).
+/// Solo se cuentan input + output como "tokens reales" —
+/// cache_read son reutilizaciones del mismo contexto cacheado, no trabajo nuevo.
+struct PeriodUsage: Sendable {
+    // Tokens reales (lo que Claude leyó y generó)
+    let inputTokens: Int
+    let outputTokens: Int
+    // Cache (para calculo de coste, no para display principal)
+    let cacheCreationTokens: Int
+    let cacheReadTokens: Int
 
-    var percentage: Double {
+    let messageCount: Int
+    let sessionCount: Int
+    let model: String?
+    let startTime: Date?
+    let lastActivity: Date?
+
+    /// Tokens "reales": input + output (excluye cache_read que es reutilizacion de contexto)
+    var realTokens: Int { inputTokens + outputTokens }
+
+    /// Coste de referencia API (no es lo que paga el suscriptor, es precio publico Anthropic)
+    var apiRefCostUSD: Double {
+        let p = ModelPricing.for(model ?? "claude-sonnet-4-6")
+        return Double(inputTokens)         * p.inputPerToken
+             + Double(outputTokens)        * p.outputPerToken
+             + Double(cacheCreationTokens) * p.cacheCreatePerToken
+             + Double(cacheReadTokens)     * p.cacheReadPerToken
+    }
+
+    func percentOfLimit(_ limit: Int) -> Double {
         guard limit > 0 else { return 0 }
-        return min(1.0, Double(used) / Double(limit))
+        return min(1.0, Double(outputTokens) / Double(limit))
     }
 
-    var remainingPercentage: Double {
-        max(0, 1.0 - percentage)
+    var formattedRealTokens: String {
+        formatTokens(realTokens)
     }
 
-    var remaining: Int {
-        max(0, limit - used)
+    var formattedOutputTokens: String {
+        formatTokens(outputTokens)
     }
 
-    var timeUntilReset: String? {
-        guard let resetAt else { return nil }
-        let diff = resetAt.timeIntervalSince(.now)
-        guard diff > 0 else { return "Disponible ahora" }
+    var formattedCost: String {
+        if apiRefCostUSD < 0.001 { return "<$0.001" }
+        return String(format: "$%.2f", apiRefCostUSD)
+    }
 
-        let hours = Int(diff / 3600)
-        let minutes = Int(diff.truncatingRemainder(dividingBy: 3600) / 60)
+    var relativeLastActivity: String? {
+        guard let last = lastActivity else { return nil }
+        let diff = Date.now.timeIntervalSince(last)
+        if diff < 60    { return "ahora mismo" }
+        if diff < 3600  { return "hace \(Int(diff / 60))m" }
+        if diff < 86400 { return "hace \(Int(diff / 3600))h" }
+        return "hace \(Int(diff / 86400))d"
+    }
 
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else if minutes > 0 {
-            return "\(minutes)m"
+    private func formatTokens(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000     { return String(format: "%.1fK", Double(n) / 1_000) }
+        return "\(n)"
+    }
+}
+
+struct CLIUsageData: Sendable {
+    let currentSession: PeriodUsage?
+    let todayTotal: PeriodUsage?
+    let weekTotal: PeriodUsage?
+}
+
+// MARK: - Model Pricing (USD por token, precios publicos API de Anthropic)
+
+struct ModelPricing {
+    let inputPerToken: Double
+    let outputPerToken: Double
+    let cacheCreatePerToken: Double
+    let cacheReadPerToken: Double
+
+    static func `for`(_ model: String) -> ModelPricing {
+        if model.contains("opus") {
+            return ModelPricing(inputPerToken: 15/1e6,   outputPerToken: 75/1e6,
+                                cacheCreatePerToken: 18.75/1e6, cacheReadPerToken: 1.5/1e6)
+        } else if model.contains("haiku") {
+            return ModelPricing(inputPerToken: 0.8/1e6,  outputPerToken: 4/1e6,
+                                cacheCreatePerToken: 1/1e6,     cacheReadPerToken: 0.08/1e6)
         } else {
-            return "< 1m"
-        }
-    }
-}
-
-struct ClaudeUsageData: Sendable {
-    let sessionUsage: UsageMetric?
-    let weeklyUsage: UsageMetric?
-}
-
-// MARK: - API Response Models
-
-struct Organization: Codable, Sendable {
-    let uuid: String
-    let name: String?
-    let capabilities: [String]?
-}
-
-/// Respuesta de /api/organizations/{id}/usage
-struct UsageResponse: Codable, Sendable {
-    let messageLimit: MessageLimit?
-
-    enum CodingKeys: String, CodingKey {
-        case messageLimit = "message_limit"
-    }
-
-    struct MessageLimit: Codable, Sendable {
-        let type: String?
-        let remaining: Int?
-        let used: Int?
-        let limit: Int?
-        let resetAt: String?
-        let windowDuration: String?
-
-        enum CodingKeys: String, CodingKey {
-            case type
-            case remaining
-            case used
-            case limit
-            case resetAt = "reset_at"
-            case windowDuration = "window_duration"
-        }
-    }
-}
-
-/// Respuesta alternativa de /api/organizations/{id}/limits
-struct LimitsResponse: Codable, Sendable {
-    let limits: [LimitEntry]?
-
-    struct LimitEntry: Codable, Sendable {
-        let type: String?
-        let used: Int?
-        let limit: Int?
-        let resetAt: String?
-
-        enum CodingKeys: String, CodingKey {
-            case type
-            case used
-            case limit
-            case resetAt = "reset_at"
+            // Sonnet (default)
+            return ModelPricing(inputPerToken: 3/1e6,    outputPerToken: 15/1e6,
+                                cacheCreatePerToken: 3.75/1e6,  cacheReadPerToken: 0.3/1e6)
         }
     }
 }

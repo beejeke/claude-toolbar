@@ -15,10 +15,16 @@ DerivedData/
 
 # App bundle (generado por make bundle)
 *.app
+*.app.zip
 
-# Secretos
+# Claude Code project settings (internal, no subir)
+.claude/
+
+# Secretos y credenciales
 .env
 *.key
+*.pem
+credentials.json
 
 # Logs
 *.log

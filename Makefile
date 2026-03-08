@@ -1,10 +1,10 @@
 APP_NAME = ClaudeToolbar
 BUNDLE_ID = com.claudetoolbar.menubar
-VERSION = 1.0.0
+VERSION = 3.0.0
 BUILD_DIR = .build/release
 APP_BUNDLE = $(APP_NAME).app
 
-.PHONY: build bundle install clean run dev
+.PHONY: build bundle install clean run dev release
 
 dev:
 	swift run
@@ -39,8 +39,13 @@ install: bundle
 	@echo "Installed: /Applications/$(APP_BUNDLE)"
 	open /Applications/$(APP_BUNDLE)
 
+release: bundle
+	@echo "Creating release zip..."
+	zip -r $(APP_NAME)-$(VERSION).app.zip $(APP_BUNDLE)
+	@echo "Release: $(APP_NAME)-$(VERSION).app.zip"
+
 clean:
-	rm -rf .build $(APP_BUNDLE)
+	rm -rf .build $(APP_BUNDLE) *.app.zip
 
 run: bundle
 	open $(APP_BUNDLE)

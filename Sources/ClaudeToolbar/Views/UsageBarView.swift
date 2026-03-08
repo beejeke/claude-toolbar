@@ -1,127 +1,158 @@
 import SwiftUI
 
-struct UsageBarView: View {
+/// Tarjeta de uso de tokens para un periodo.
+/// Muestra tokens reales (input + output, sin cache_read),
+/// barra de progreso respecto a un limite, y coste de referencia API.
+struct UsageCardView: View {
     let title: String
     let icon: String
-    let metric: UsageMetric?
+    let usage: PeriodUsage?
     let color: Color
-
-    private var remaining: Double { metric?.remainingPercentage ?? 0 }
-    private var used: Double { metric?.percentage ?? 0 }
+    /// Limite de output_tokens para calcular el porcentaje. nil = no muestra barra.
+    let outputLimit: Int?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            titleRow
-            progressBar
-            infoRow
+        VStack(alignment: .leading, spacing: 8) {
+            headerRow
+            if let usage {
+                metricsRow(usage)
+                if let limit = outputLimit {
+                    progressRow(usage, limit: limit)
+                }
+                footerRow(usage)
+            } else {
+                Text("Sin actividad")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 4)
     }
 
     // MARK: Subviews
 
-    private var titleRow: some View {
-        HStack(spacing: 6) {
+    private var headerRow: some View {
+        HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 16)
-
             Text(title)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.primary)
-
             Spacer()
-
-            percentageTag
-        }
-    }
-
-    private var percentageTag: some View {
-        Text("\(Int(remaining * 100))% restante")
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(tagForeground)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(tagBackground)
-            .clipShape(Capsule())
-    }
-
-    private var progressBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                // Track
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(.quaternary)
-                    .frame(height: 10)
-
-                // Fill
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(barGradient)
-                    .frame(width: max(0, geo.size.width * remaining), height: 10)
-                    .animation(.easeInOut(duration: 0.6), value: remaining)
-            }
-        }
-        .frame(height: 10)
-    }
-
-    private var infoRow: some View {
-        HStack {
-            if let metric {
-                HStack(spacing: 3) {
-                    Image(systemName: "bubble.left.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Text("\(metric.remaining) de \(metric.limit) mensajes")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Sin datos de uso")
-                    .font(.system(size: 11))
+            if let last = usage?.relativeLastActivity {
+                Text(last)
+                    .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
+        }
+    }
 
+    private func metricsRow(_ u: PeriodUsage) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            // Output tokens (lo que Claude genero — metrica principal)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(u.formattedOutputTokens)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                Text("tokens generados")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
             Spacer()
-
-            if let reset = metric?.timeUntilReset {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Text("Restaura en \(reset)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+            // Coste API referencia (no es lo que paga el suscriptor)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(u.formattedCost)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Text("ref. API")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
             }
         }
     }
 
-    // MARK: Computed colors
+    private func progressRow(_ u: PeriodUsage, limit: Int) -> some View {
+        let pct = u.percentOfLimit(limit)
+        let usedTokens = u.formattedOutputTokens
+        let limitStr   = formatTokens(limit)
 
-    private var barGradient: LinearGradient {
-        let base = colorForPercentage(remaining)
-        return LinearGradient(
-            colors: [base.opacity(0.7), base],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
+        return VStack(alignment: .leading, spacing: 3) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(.quaternary)
+                        .frame(height: 6)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(barGradient(pct: pct))
+                        .frame(width: max(4, geo.size.width * pct), height: 6)
+                        .animation(.easeInOut(duration: 0.5), value: pct)
+                }
+            }
+            .frame(height: 6)
 
-    private var tagForeground: Color {
-        colorForPercentage(remaining)
-    }
-
-    private var tagBackground: some ShapeStyle {
-        colorForPercentage(remaining).opacity(0.15)
-    }
-
-    private func colorForPercentage(_ pct: Double) -> Color {
-        switch pct {
-        case 0.5...: return color
-        case 0.2..<0.5: return .orange
-        default: return .red
+            HStack {
+                Text("\(Int(pct * 100))% del límite")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(colorForPercent(pct))
+                Spacer()
+                Text("\(usedTokens) / \(limitStr) tok")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
-}
 
+    private func footerRow(_ u: PeriodUsage) -> some View {
+        HStack(spacing: 10) {
+            pill("\(u.messageCount)", icon: "arrow.right.circle.fill", label: "llamadas")
+            if u.sessionCount > 1 {
+                pill("\(u.sessionCount)", icon: "folder.fill", label: "sesiones")
+            }
+            if let model = u.model {
+                pill(shortModel(model), icon: "cpu", label: nil)
+            }
+            Spacer()
+            // Tokens totales reales (in + out, sin cache)
+            Text("\(formatTokens(u.realTokens)) reales")
+                .font(.system(size: 10))
+                .foregroundStyle(.quaternary)
+        }
+    }
+
+    private func pill(_ value: String, icon: String, label: String?) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: icon).font(.system(size: 8)).foregroundStyle(.tertiary)
+            Text(label.map { "\(value) \($0)" } ?? value)
+                .font(.system(size: 10)).foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: Helpers
+
+    private func barGradient(pct: Double) -> LinearGradient {
+        let c = colorForPercent(pct)
+        return LinearGradient(colors: [c.opacity(0.6), c], startPoint: .leading, endPoint: .trailing)
+    }
+
+    private func colorForPercent(_ p: Double) -> Color {
+        switch p {
+        case ..<0.5: return color
+        case ..<0.8: return .orange
+        default:     return .red
+        }
+    }
+
+    private func formatTokens(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000     { return String(format: "%.1fK", Double(n) / 1_000) }
+        return "\(n)"
+    }
+
+    private func shortModel(_ m: String) -> String {
+        if m.contains("opus")   { return "Opus" }
+        if m.contains("sonnet") { return "Sonnet" }
+        if m.contains("haiku")  { return "Haiku" }
+        return m
+    }
+}
