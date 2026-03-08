@@ -30,6 +30,11 @@ final class UsageViewModel: ObservableObject {
         }
     }
 
+    /// Activa o desactiva las notificaciones de umbral. Persiste en UserDefaults.
+    @Published var notificationsEnabled: Bool {
+        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: "notificationsEnabled") }
+    }
+
     private var autoRefreshTask: Task<Void, Never>?
     private let refreshInterval: UInt64 = 60 * 1_000_000_000
 
@@ -48,6 +53,10 @@ final class UsageViewModel: ObservableObject {
 
         dailyOutputLimit  = (dailyOverridden  && storedDaily  > 0) ? storedDaily  : plan.defaultDailyOutputLimit
         weeklyOutputLimit = (weeklyOverridden && storedWeekly > 0) ? storedWeekly : plan.defaultWeeklyOutputLimit
+
+        // Notificaciones: activadas por defecto; respetar preferencia si ya fue guardada
+        let storedNotif = UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool
+        notificationsEnabled = storedNotif ?? true
 
         Task { await fetchData() }
         startAutoRefresh()
@@ -87,7 +96,17 @@ final class UsageViewModel: ObservableObject {
         dailyHistory   = data.dailyHistory
         burnRate       = computeBurnRate(tokensPerHour: data.sessionTokensPerHour)
         lastUpdated    = .now
-        isLoading = false
+        isLoading      = false
+
+        // Comprobar umbrales y enviar notificaciones si corresponde
+        if notificationsEnabled {
+            NotificationService.checkAndNotify(
+                dailyUsed:   data.todayTotal?.outputTokens  ?? 0,
+                dailyLimit:  dailyOutputLimit,
+                weeklyUsed:  data.weekTotal?.outputTokens   ?? 0,
+                weeklyLimit: weeklyOutputLimit
+            )
+        }
     }
 
     private func startAutoRefresh() {

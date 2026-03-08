@@ -27,9 +27,21 @@ final class MenuBarController {
             button.target = self
             button.action = #selector(handleClick)
         }
+
+        // Abrir el popover cuando se pulsa una notificación del sistema
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(openPopoverFromNotification),
+            name: .claudeToolbarOpenPopover,
+            object: nil
+        )
     }
 
     // MARK: - Toggle
+
+    @objc private func openPopoverFromNotification() {
+        if !popover.isShown { openPopover() }
+    }
 
     @objc private func handleClick() {
         if popover.isShown {

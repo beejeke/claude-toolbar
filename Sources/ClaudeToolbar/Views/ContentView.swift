@@ -2,15 +2,24 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var viewModel: UsageViewModel
+    @State private var showSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
             headerView
             Divider()
-            scrollContent
+            if showSettings {
+                SettingsView()
+                    .environmentObject(viewModel)
+                    .transition(.opacity)
+            } else {
+                scrollContent
+                    .transition(.opacity)
+            }
         }
         .frame(width: 340)
         .background(Color(NSColor.windowBackgroundColor))
+        .animation(.easeInOut(duration: 0.15), value: showSettings)
     }
 
     // MARK: Header
@@ -22,16 +31,28 @@ struct ContentView: View {
             planBadge
             Spacer()
 
-            if viewModel.isLoading {
-                ProgressView().scaleEffect(0.7).frame(width: 16, height: 16)
-            } else {
-                Button { viewModel.refresh() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
+            if !showSettings {
+                if viewModel.isLoading {
+                    ProgressView().scaleEffect(0.7).frame(width: 16, height: 16)
+                } else {
+                    Button { viewModel.refresh() } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain).help("Actualizar (Cmd+R)")
+                    .keyboardShortcut("r", modifiers: .command)
                 }
-                .buttonStyle(.plain).help("Actualizar (Cmd+R)")
-                .keyboardShortcut("r", modifiers: .command)
             }
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { showSettings.toggle() }
+            } label: {
+                Image(systemName: showSettings ? "xmark.circle.fill" : "gearshape.fill")
+                    .font(.system(size: showSettings ? 14 : 12))
+                    .foregroundStyle(showSettings ? Color.secondary : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(showSettings ? "Cerrar ajustes" : "Ajustes")
 
             Button { NSApplication.shared.terminate(nil) } label: {
                 Image(systemName: "power").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -104,7 +125,6 @@ struct ContentView: View {
 
     private var bottomBar: some View {
         HStack {
-            // Nota sobre coste de referencia
             Text("Ref. API: precios Anthropic públicos")
                 .font(.system(size: 9)).foregroundStyle(.quaternary)
             Spacer()
