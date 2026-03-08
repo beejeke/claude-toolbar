@@ -18,13 +18,9 @@ actor CLIUsageService {
         let startOfToday = cal.startOfDay(for: now)
         let startOfWeek  = cal.date(byAdding: .day, value: -7, to: startOfToday) ?? startOfToday
 
-        // Sesion actual: el sessionId mas reciente (por ultimo timestamp)
-        let bySession = Dictionary(grouping: entries) { $0.sessionId }
-        let mostRecentSession = bySession.max {
-            ($0.value.compactMap(\.timestamp).max() ?? .distantPast) <
-            ($1.value.compactMap(\.timestamp).max() ?? .distantPast)
-        }
-        let currentSession = mostRecentSession.map { aggregate($0.value) }
+        // Sesion actual: bloque de actividad continua mas reciente.
+        // Se considera "nueva sesion" cuando hay un gap > 30 min entre mensajes consecutivos.
+        let currentSession = currentActivityBlock(from: entries).map { aggregate($0) }
 
         let todayEntries = entries.filter { ($0.timestamp ?? .distantPast) >= startOfToday }
         let weekEntries  = entries.filter { ($0.timestamp ?? .distantPast) >= startOfWeek }
@@ -97,6 +93,29 @@ actor CLIUsageService {
             ))
         }
         return entries
+    }
+
+    // MARK: - Session detection
+
+    /// Devuelve las entradas del sessionId mas reciente (por ultimo timestamp).
+    /// Cada vez que el usuario hace `exit` y relanza Claude CLI se genera un nuevo sessionId.
+    private func currentActivityBlock(from entries: [Entry]) -> [Entry]? {
+        let withTimestamp = entries.filter { $0.timestamp != nil }
+        guard !withTimestamp.isEmpty else { return nil }
+
+        // Agrupar por sessionId y encontrar el que tiene el timestamp mas reciente
+        var latestTime: Date = .distantPast
+        var latestSessionId: String = ""
+
+        for entry in withTimestamp {
+            if entry.timestamp! > latestTime {
+                latestTime = entry.timestamp!
+                latestSessionId = entry.sessionId
+            }
+        }
+
+        let block = withTimestamp.filter { $0.sessionId == latestSessionId }
+        return block.isEmpty ? nil : block
     }
 
     // MARK: - Aggregation
