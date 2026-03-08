@@ -8,6 +8,7 @@ final class UsageViewModel: ObservableObject {
     @Published var weekTotal: PeriodUsage?
     @Published var dailyHistory: [DailyUsage] = []
     @Published var burnRate: BurnRate?
+    @Published var rateLimitInfo: RateLimitInfo?
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
@@ -95,6 +96,7 @@ final class UsageViewModel: ObservableObject {
         weekTotal      = data.weekTotal
         dailyHistory   = data.dailyHistory
         burnRate       = computeBurnRate(tokensPerHour: data.sessionTokensPerHour)
+        rateLimitInfo  = data.rateLimitInfo
         lastUpdated    = .now
         isLoading      = false
 

@@ -97,6 +97,11 @@ struct ContentView: View {
                               usage: viewModel.weekTotal, color: .purple,
                               outputLimit: viewModel.weeklyOutputLimit)
 
+                if let rl = viewModel.rateLimitInfo {
+                    Divider()
+                    rateLimitBanner(rl)
+                }
+
                 if !viewModel.dailyHistory.isEmpty {
                     Divider()
                     DailyHistoryChartView(days: viewModel.dailyHistory)
@@ -112,6 +117,26 @@ struct ContentView: View {
             Divider()
             bottomBar
         }
+    }
+
+    private func rateLimitBanner(_ rl: RateLimitInfo) -> some View {
+        let isToday = rl.wasHitToday
+        let accent: Color = isToday ? .red : .secondary
+        return HStack(spacing: 6) {
+            Image(systemName: isToday ? "exclamationmark.octagon.fill" : "clock.arrow.circlepath")
+                .font(.system(size: 10))
+                .foregroundStyle(accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(isToday ? "Límite alcanzado \(rl.relativeHitAt)" : "Último límite \(rl.relativeHitAt)")
+                    .font(.system(size: 10, weight: isToday ? .semibold : .regular))
+                    .foregroundStyle(isToday ? Color.primary : Color.secondary)
+                Text("Se restablece: \(rl.resetText)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(isToday ? Color.secondary : Color.primary.opacity(0.3))
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
     }
 
     private var noDataView: some View {

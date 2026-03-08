@@ -11,7 +11,7 @@ actor CLIUsageService {
         let entries = readAllEntries()
         guard !entries.isEmpty else {
             return CLIUsageData(currentSession: nil, todayTotal: nil, weekTotal: nil,
-                                dailyHistory: [], sessionTokensPerHour: nil)
+                                dailyHistory: [], sessionTokensPerHour: nil, rateLimitInfo: nil)
         }
 
         let now = Date.now
@@ -61,7 +61,8 @@ actor CLIUsageService {
             todayTotal:           todayEntries.isEmpty ? nil : aggregate(todayEntries),
             weekTotal:            weekEntries.isEmpty  ? nil : aggregate(weekEntries),
             dailyHistory:         dailyHistory,
-            sessionTokensPerHour: sessionTokensPerHour
+            sessionTokensPerHour: sessionTokensPerHour,
+            rateLimitInfo:        readLatestRateLimitInfo()
         )
     }
 
@@ -149,6 +150,43 @@ actor CLIUsageService {
 
         let block = withTimestamp.filter { $0.sessionId == latestSessionId }
         return block.isEmpty ? nil : block
+    }
+
+    // MARK: - Rate limit detection
+
+    /// Escanea todos los JSONL buscando el entry de rate_limit más reciente.
+    private func readLatestRateLimitInfo() -> RateLimitInfo? {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let projectsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects")
+        guard let enumerator = FileManager.default.enumerator(
+            at: projectsDir, includingPropertiesForKeys: nil
+        ) else { return nil }
+
+        var latest: RateLimitInfo? = nil
+
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+                guard
+                    let data = line.data(using: .utf8),
+                    let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    obj["error"] as? String == "rate_limit",
+                    let tsStr   = obj["timestamp"] as? String,
+                    let hitAt   = iso.date(from: tsStr),
+                    let message = obj["message"] as? [String: Any],
+                    let content = message["content"] as? [[String: Any]],
+                    let text    = content.first?["text"] as? String,
+                    let range   = text.range(of: "resets ")
+                else { continue }
+
+                let resetText = String(text[range.upperBound...])
+                let info = RateLimitInfo(hitAt: hitAt, resetText: resetText)
+                if latest == nil || hitAt > latest!.hitAt { latest = info }
+            }
+        }
+        return latest
     }
 
     // MARK: - Aggregation

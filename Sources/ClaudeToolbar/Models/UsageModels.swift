@@ -69,9 +69,30 @@ struct CLIUsageData: Sendable {
     let currentSession: PeriodUsage?
     let todayTotal: PeriodUsage?
     let weekTotal: PeriodUsage?
-    let dailyHistory: [DailyUsage]  // últimos 7 días, orden ascendente (index 0 = más antiguo)
-    /// Velocidad de la sesión activa (nil si sesión inactiva o < 5 min de datos).
+    let dailyHistory: [DailyUsage]
     let sessionTokensPerHour: Double?
+    /// Último evento de rate limit detectado en los JSONL (nil si nunca se ha alcanzado).
+    let rateLimitInfo: RateLimitInfo?
+}
+
+// MARK: - Rate Limit Info
+
+struct RateLimitInfo: Sendable {
+    let hitAt: Date       // cuándo se alcanzó el límite
+    let resetText: String // texto original, e.g. "4pm (Atlantic/Canary)"
+
+    var relativeHitAt: String {
+        let diff = Date.now.timeIntervalSince(hitAt)
+        if diff < 60    { return "ahora mismo" }
+        if diff < 3600  { return "hace \(Int(diff / 60))m" }
+        if diff < 86400 { return "hace \(Int(diff / 3600))h" }
+        return "hace \(Int(diff / 86400))d"
+    }
+
+    /// true si el límite se alcanzó hoy (UTC local).
+    var wasHitToday: Bool {
+        Calendar.current.isDateInToday(hitAt)
+    }
 }
 
 // MARK: - Burn Rate
