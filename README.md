@@ -13,7 +13,7 @@
 
 ```
 ╔══════════════════════════════════════════╗
-║  🟠 Claude Code  [Pro]             ↻  ⏻ ║
+║  🟠 Claude Code  [Pro]          ↻  ⚙️  ⏻ ║
 ╠══════════════════════════════════════════╣
 ║  🕐 Current session           just now  ║
 ║                                          ║
@@ -27,6 +27,7 @@
 ║  tokens generated               API ref  ║
 ║  ████████████░░░░░░  31%                 ║
 ║  46.9K / 150K tok · 105 calls            ║
+║  🔥 12.3K/h · límite en ~8h 20m         ║
 ╠══════════════════════════════════════════╣
 ║  📅 Last 7 days                          ║
 ║                                          ║
@@ -53,6 +54,7 @@
 | **Tokens generated** | `output_tokens` — what Claude actually wrote. The real measure of work done. |
 | **API cost ref.** | Estimated cost at public Anthropic pricing. Useful even on a Pro subscription as a consumption reference. |
 | **Usage %** | Today and weekly progress bars vs your plan's default limits (auto-detected). |
+| **Burn rate** | Token velocity of the active session (K/h) and predicted time to daily limit. |
 | **Call count** | Number of Claude API interactions per period. |
 | **Daily history** | Mini bar chart of output tokens per day for the last 7 days. |
 
@@ -63,7 +65,7 @@
 ## Requirements
 
 - **macOS 13.0+** (Ventura or later)
-- **[Claude Code CLI](https://claude.ai/code)** — the app reads session files created by `claude` in the terminal. If you've ever run `claude`, you're set. If not, install it first and run any command — the `~/.claude/` directory will be created automatically.
+- **[Claude Code CLI](https://claude.ai/code)** — the app reads session files created by `claude` in the terminal. If you've ever run `claude`, you're set.
 - **Swift Command Line Tools** (for building from source only)
 
 ---
@@ -100,7 +102,7 @@ make install   # → copies to /Applications and opens
 
 ## First run
 
-On first open, Claude Toolbar looks for `~/.claude/projects/` — the directory Claude Code creates automatically when you run any `claude` command.
+On first open, Claude Toolbar looks for `~/.claude/projects/` — the directory Claude Code creates automatically when you run any `claude` command. macOS will prompt for notification permission on first launch.
 
 | State | What you'll see |
 |-------|----------------|
@@ -121,19 +123,22 @@ No login, no API key, no configuration needed.
           ▼                             ▼
   CLIUsageService (Swift actor)   KeychainCredentialsService
     ├─ reads all .jsonl files        └─ reads subscriptionType
-    ├─ parses assistant messages          from Claude Code credentials
-    └─ aggregates by period                    │
-          │                                    │
-          └──────────────┬─────────────────────┘
-                         ▼
-              UsageViewModel (@MainActor)
-                ├─ applies plan limits (Pro / Max5 / Max20)
-                └─ refreshes every 60 seconds
-                         │
-                         ▼
-              Menu Bar Popover (SwiftUI)
-                ├─ tokens + cost + % progress bars
-                └─ 7-day daily bar chart
+    ├─ parses assistant messages
+    ├─ aggregates by period
+    └─ computes session burn rate
+          │
+          ▼
+  UsageViewModel (@MainActor)
+    ├─ applies plan limits (Pro / Max5 / Max20)
+    ├─ refreshes every 60 seconds
+    └─ fires threshold notifications (70%, 90%)
+          │
+          ▼
+  Menu Bar Popover (SwiftUI)
+    ├─ tokens + cost + % progress bars
+    ├─ burn rate prediction
+    ├─ 7-day daily bar chart
+    └─ ⚙️ settings panel
 ```
 
 Claude Code writes every API interaction to `~/.claude/projects/<project>/<session>.jsonl`. Each assistant entry contains a `usage` object with exact token counts. Claude Toolbar reads these files directly — no network calls, no authentication.
@@ -171,37 +176,54 @@ Claude Toolbar automatically detects your subscription plan by reading the `Clau
 
 The detected plan name is shown as a badge in the popover header. If you upgrade or change plans, the limits update automatically on the next app launch.
 
-### Manual override
+---
 
-You can override the detected limits at any time:
+## Burn rate
 
-```bash
-defaults write com.claudetoolbar.menubar dailyOutputLimit  -int 200000
-defaults write com.claudetoolbar.menubar weeklyOutputLimit -int 1000000
-```
+When an active session is detected (last activity within 30 minutes, at least 5 minutes of data), a burn rate row appears below the daily progress bar:
 
-To restore auto-detected plan defaults, delete the override keys:
+- **`🔥 12.3K/h · límite en ~8h 20m`** — normal state (orange)
+- Turns **red** when fewer than 2 hours remain to the daily limit
+- Shows `"límite superado"` if the limit is already exceeded
 
-```bash
-defaults delete com.claudetoolbar.menubar dailyOutputLimit
-defaults delete com.claudetoolbar.menubar weeklyOutputLimit
-```
+The rate is computed as `output_tokens ÷ session_duration_hours`. Time to limit is `remaining_tokens ÷ rate`.
 
 ---
 
 ## 7-day bar chart
 
-The daily history chart at the bottom of the popover shows one bar per day for the last 7 calendar days. Bar heights are proportional to that day's output tokens — the tallest bar represents the peak day.
+The daily history chart shows one bar per day for the last 7 calendar days, proportional to that day's output tokens.
 
 - **Today's bar** is highlighted
-- **Click any bar** to see the exact token count and API cost reference for that day
+- **Click any bar** to see the exact token count and API cost reference
 - **Hover** for a native macOS tooltip
 
 ---
 
-## Performance
+## Notifications
 
-Claude Toolbar is designed to have **zero impact** on your Mac:
+Claude Toolbar sends native macOS alerts when daily or weekly usage crosses **70%** and **90%** of your limits. Each threshold fires at most once per day (daily) or once per ISO week (weekly).
+
+**Tapping a notification** opens the menu bar popover automatically.
+
+Toggle notifications off in the **⚙️ Settings** panel inside the app.
+
+---
+
+## Settings
+
+Click the **⚙️** button in the header to open the settings panel:
+
+| Setting | Description |
+|---------|-------------|
+| **Notification toggle** | Enable/disable threshold alerts |
+| **Limits display** | Shows current daily/weekly limits |
+| **Reset to plan defaults** | Discards manual overrides and restores auto-detected plan limits |
+| **About** | Data source path, network status |
+
+---
+
+## Performance
 
 | Resource | Usage |
 |----------|-------|
@@ -220,8 +242,6 @@ Claude Toolbar is designed to have **zero impact** on your Mac:
 - **No sandbox** — required to access `~/.claude/` (standard for menu bar utilities)
 - **Open source** — every line of code is auditable here
 
-`~/.claude/projects/` files contain your conversation history. They stay on your machine — Claude Toolbar never touches them beyond reading token counts.
-
 ---
 
 ## Project structure
@@ -231,24 +251,37 @@ claude-toolbar/
 ├── Package.swift
 ├── Makefile
 └── Sources/ClaudeToolbar/
-    ├── main.swift                        # AppKit entry point
+    ├── main.swift
     ├── AppDelegate.swift
-    ├── MenuBarController.swift           # NSStatusItem + NSPopover + Claude logo
+    ├── MenuBarController.swift
     ├── Models/
-    │   └── UsageModels.swift             # PeriodUsage · DailyUsage · SubscriptionPlan · CLIUsageData
+    │   └── UsageModels.swift             # PeriodUsage · DailyUsage · BurnRate · SubscriptionPlan · CLIUsageData
     ├── Services/
-    │   ├── ClaudeAPIService.swift        # Reads ~/.claude/projects/**/*.jsonl
-    │   └── KeychainCredentialsService.swift  # Reads plan from macOS Keychain
+    │   ├── ClaudeAPIService.swift        # CLIUsageService — reads ~/.claude/projects/**/*.jsonl
+    │   ├── KeychainCredentialsService.swift  # reads plan from macOS Keychain
+    │   └── NotificationService.swift    # UNUserNotificationCenter threshold alerts
     ├── ViewModels/
-    │   └── UsageViewModel.swift          # @MainActor · plan detection · auto-refresh
+    │   └── UsageViewModel.swift          # @MainActor · plan detection · burn rate · notifications
     └── Views/
-        ├── ContentView.swift             # Main popover layout
-        ├── UsageBarView.swift            # UsageCardView with progress bar
+        ├── ContentView.swift             # Main popover + settings toggle
+        ├── UsageBarView.swift            # UsageCardView with progress bar + burn rate row
         ├── DailyHistoryChartView.swift   # 7-day bar chart
-        └── ClaudeLogoView.swift          # Claude logo built in SwiftUI
+        ├── SettingsView.swift            # Notifications toggle + limits + about
+        └── ClaudeLogoView.swift          # Claude logo in SwiftUI
 ```
 
-**Stack:** Swift 6 · SwiftUI · AppKit · Security.framework · Swift Package Manager · macOS 13+
+**Stack:** Swift 6 · SwiftUI · AppKit · Security.framework · UserNotifications.framework · SPM · macOS 13+
+
+---
+
+## Manual limit override
+
+```bash
+defaults write com.claudetoolbar.menubar dailyOutputLimit  -int 200000
+defaults write com.claudetoolbar.menubar weeklyOutputLimit -int 1000000
+```
+
+Use "Reset to plan defaults" in Settings to restore auto-detected values.
 
 ---
 
