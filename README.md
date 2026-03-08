@@ -36,6 +36,9 @@
 ║  █████████████████░░  54%               ║
 ║  404.2K / 750K tok · 824 calls           ║
 ╠══════════════════════════════════════════╣
+║  ⛔ Límite alcanzado hace 2h             ║
+║     Se restablece: 4pm (Atlantic/Canary) ║
+╠══════════════════════════════════════════╣
 ║  📊 Daily history                        ║
 ║   ▂  ▅  █  ▃  ▁  ▄  ▇                   ║
 ║  Mon Tue Wed Thu Fri Sat Sun             ║
@@ -57,6 +60,7 @@
 | **Burn rate** | Token velocity of the active session (K/h) and predicted time to daily limit. |
 | **Call count** | Number of Claude API interactions per period. |
 | **Daily history** | Mini bar chart of output tokens per day for the last 7 days. |
+| **Rate limit reset** | When the platform limit has been hit, shows when it resets — read from local session files, no network needed. |
 
 > **Why not total tokens?** `cache_read_input_tokens` inflate the count massively (they represent the same cached context re-read on every call — not new work). Claude Toolbar shows only `input + output` as the meaningful total, and excludes cache-read from the display. Cache tokens are still included in the cost reference since they have a real per-token cost.
 
@@ -125,7 +129,8 @@ No login, no API key, no configuration needed.
     ├─ reads all .jsonl files        └─ reads subscriptionType
     ├─ parses assistant messages
     ├─ aggregates by period
-    └─ computes session burn rate
+    ├─ computes session burn rate
+    └─ detects rate limit reset time
           │
           ▼
   UsageViewModel (@MainActor)
@@ -187,6 +192,17 @@ When an active session is detected (last activity within 30 minutes, at least 5 
 - Shows `"límite superado"` if the limit is already exceeded
 
 The rate is computed as `output_tokens ÷ session_duration_hours`. Time to limit is `remaining_tokens ÷ rate`.
+
+---
+
+## Rate limit reset time
+
+When the Claude Code CLI hits a platform rate limit, it logs the event in the local session files. Claude Toolbar surfaces this data as a banner between the usage cards and the daily chart:
+
+- **If hit today** → `⛔ Límite alcanzado hace 2h · Se restablece: 4pm (Atlantic/Canary)` in red
+- **If hit previously** → muted `🕐 Último límite hace 1d · Se restablece: 1pm (...)` in grey
+
+If you've never hit the limit, the banner doesn't appear. No API calls needed — the reset time is extracted directly from `~/.claude/projects/**/*.jsonl`.
 
 ---
 
@@ -255,7 +271,7 @@ claude-toolbar/
     ├── AppDelegate.swift
     ├── MenuBarController.swift
     ├── Models/
-    │   └── UsageModels.swift             # PeriodUsage · DailyUsage · BurnRate · SubscriptionPlan · CLIUsageData
+    │   └── UsageModels.swift             # PeriodUsage · DailyUsage · BurnRate · RateLimitInfo · SubscriptionPlan · CLIUsageData
     ├── Services/
     │   ├── ClaudeAPIService.swift        # CLIUsageService — reads ~/.claude/projects/**/*.jsonl
     │   ├── KeychainCredentialsService.swift  # reads plan from macOS Keychain
