@@ -19,6 +19,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             ClaudeLogoView(size: 18, color: .orange)
             Text("Claude Code").font(.system(size: 14, weight: .semibold))
+            planBadge
             Spacer()
 
             if viewModel.isLoading {
@@ -38,6 +39,16 @@ struct ContentView: View {
             .buttonStyle(.plain).help("Salir")
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
+    }
+
+    private var planBadge: some View {
+        Text(viewModel.subscriptionPlan.displayName)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.orange.opacity(0.12), in: Capsule())
+            .help("Plan detectado desde Keychain · Límites: \(viewModel.dailyOutputLimit / 1000)K/día, \(viewModel.weeklyOutputLimit / 1000)K/semana")
     }
 
     // MARK: Content

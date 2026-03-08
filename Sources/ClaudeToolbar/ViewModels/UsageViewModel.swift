@@ -10,26 +10,54 @@ final class UsageViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
-    // Limites configurables de tokens de salida (output_tokens) por periodo.
-    // Base: suscripcion Claude Code Pro — ajusta segun tu uso habitual.
+    /// Plan detectado automáticamente desde el Keychain de Claude Code CLI.
+    @Published private(set) var subscriptionPlan: SubscriptionPlan = .pro
+
+    // Límites de output tokens configurables por periodo.
+    // Se inicializan con los valores del plan detectado y se persisten en UserDefaults
+    // si el usuario los sobreescribe manualmente.
     @Published var dailyOutputLimit: Int {
-        didSet { UserDefaults.standard.set(dailyOutputLimit, forKey: "dailyOutputLimit") }
+        didSet {
+            UserDefaults.standard.set(dailyOutputLimit, forKey: "dailyOutputLimit")
+            UserDefaults.standard.set(true, forKey: "dailyLimitOverridden")
+        }
     }
     @Published var weeklyOutputLimit: Int {
-        didSet { UserDefaults.standard.set(weeklyOutputLimit, forKey: "weeklyOutputLimit") }
+        didSet {
+            UserDefaults.standard.set(weeklyOutputLimit, forKey: "weeklyOutputLimit")
+            UserDefaults.standard.set(true, forKey: "weeklyLimitOverridden")
+        }
     }
 
     private var autoRefreshTask: Task<Void, Never>?
     private let refreshInterval: UInt64 = 60 * 1_000_000_000
 
     init() {
-        let daily  = UserDefaults.standard.integer(forKey: "dailyOutputLimit")
-        let weekly = UserDefaults.standard.integer(forKey: "weeklyOutputLimit")
-        dailyOutputLimit  = daily  > 0 ? daily  : 150_000
-        weeklyOutputLimit = weekly > 0 ? weekly : 750_000
+        // Detectar plan de suscripción desde el Keychain
+        let plan = KeychainCredentialsService.readSubscriptionPlan()
+        subscriptionPlan = plan
+
+        // Usar límite guardado solo si el usuario lo sobreescribió manualmente;
+        // de lo contrario, aplicar los valores del plan detectado.
+        let dailyOverridden  = UserDefaults.standard.bool(forKey: "dailyLimitOverridden")
+        let weeklyOverridden = UserDefaults.standard.bool(forKey: "weeklyLimitOverridden")
+
+        let storedDaily  = UserDefaults.standard.integer(forKey: "dailyOutputLimit")
+        let storedWeekly = UserDefaults.standard.integer(forKey: "weeklyOutputLimit")
+
+        dailyOutputLimit  = (dailyOverridden  && storedDaily  > 0) ? storedDaily  : plan.defaultDailyOutputLimit
+        weeklyOutputLimit = (weeklyOverridden && storedWeekly > 0) ? storedWeekly : plan.defaultWeeklyOutputLimit
 
         Task { await fetchData() }
         startAutoRefresh()
+    }
+
+    /// Descarta cualquier override manual y vuelve a los límites del plan detectado.
+    func resetLimitsToDetectedPlan() {
+        UserDefaults.standard.removeObject(forKey: "dailyLimitOverridden")
+        UserDefaults.standard.removeObject(forKey: "weeklyLimitOverridden")
+        dailyOutputLimit  = subscriptionPlan.defaultDailyOutputLimit
+        weeklyOutputLimit = subscriptionPlan.defaultWeeklyOutputLimit
     }
 
     func refresh() {

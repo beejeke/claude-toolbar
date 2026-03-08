@@ -95,6 +95,53 @@ struct DailyUsage: Sendable, Identifiable {
     }()
 }
 
+// MARK: - Subscription Plan
+
+enum SubscriptionPlan: Sendable {
+    case pro
+    case max5
+    case max20
+
+    /// Inicializa desde los campos del Keychain `Claude Code-credentials`.
+    init(subscriptionType: String, rateLimitTier: String) {
+        let sub  = subscriptionType.lowercased()
+        let tier = rateLimitTier.lowercased()
+        if sub.contains("max_20") || sub.contains("max20") || tier.contains("max_20") {
+            self = .max20
+        } else if sub.contains("max_5") || sub.contains("max5") || tier.contains("max_5") {
+            self = .max5
+        } else {
+            self = .pro
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .pro:   return "Pro"
+        case .max5:  return "Max 5×"
+        case .max20: return "Max 20×"
+        }
+    }
+
+    /// Límite diario de output tokens aproximado según el plan.
+    var defaultDailyOutputLimit: Int {
+        switch self {
+        case .pro:   return 150_000
+        case .max5:  return 375_000
+        case .max20: return 750_000
+        }
+    }
+
+    /// Límite semanal de output tokens aproximado según el plan.
+    var defaultWeeklyOutputLimit: Int {
+        switch self {
+        case .pro:   return 750_000
+        case .max5:  return 1_875_000
+        case .max20: return 3_750_000
+        }
+    }
+}
+
 // MARK: - Model Pricing (USD por token, precios publicos API de Anthropic)
 
 struct ModelPricing {
