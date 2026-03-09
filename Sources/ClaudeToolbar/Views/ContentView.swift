@@ -89,13 +89,15 @@ struct ContentView: View {
                               outputLimit: viewModel.effectiveWindowLimit,
                               burnRate: viewModel.burnRate,
                               todayTotal: viewModel.todayTotal,
-                              isCalibrated: viewModel.calibratedWindowLimit != nil)
+                              isCalibrated: viewModel.calibratedWindowLimit != nil,
+                              resetTime: viewModel.windowResetTime)
 
                 Divider()
 
                 UsageCardView(title: lm.s(.lastSevenDays), icon: "calendar",
                               usage: viewModel.weekTotal, color: .purple,
-                              outputLimit: viewModel.weeklyOutputLimit)
+                              outputLimit: viewModel.weeklyOutputLimit,
+                              resetTime: viewModel.weeklyResetTime)
 
                 // Solo mostrar el banner si el rate limit ocurrió en la ventana activa actual (< 5h).
                 // Si pasó hace más de 5h, la ventana ya se reseteó y el dato es obsoleto.

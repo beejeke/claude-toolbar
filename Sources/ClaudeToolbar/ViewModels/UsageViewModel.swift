@@ -13,6 +13,16 @@ final class UsageViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var lastUpdated: Date?
 
+    /// Inicio de la ventana activa de 5h. El reset ocurre a windowStartTime + 5h.
+    @Published private(set) var windowStartTime: Date = Date()
+    /// Inicio del ciclo semanal activo (7 días desde el primer JSONL). El reset ocurre a weeklyStartTime + 7d.
+    @Published private(set) var weeklyStartTime: Date = Date()
+
+    /// Momento exacto en que se resetea la ventana de 5h.
+    var windowResetTime: Date { windowStartTime.addingTimeInterval(5 * 3600) }
+    /// Momento exacto en que se resetea el ciclo semanal.
+    var weeklyResetTime: Date { weeklyStartTime.addingTimeInterval(7 * 24 * 3600) }
+
     /// Límite de ventana calibrado automáticamente desde el último rate limit observado en JSONL.
     /// Cuando existe, refleja el límite REAL del plan del usuario (auto-detectado sin API).
     @Published private(set) var calibratedWindowLimit: Int?
@@ -107,6 +117,8 @@ final class UsageViewModel: ObservableObject {
         burnRate              = computeBurnRate(tokensPerHour: data.sessionTokensPerHour)
         rateLimitInfo         = data.rateLimitInfo
         calibratedWindowLimit = data.calibratedWindowLimit
+        windowStartTime       = data.windowStartTime
+        weeklyStartTime       = data.weeklyStartTime
         lastUpdated           = .now
         isLoading             = false
 

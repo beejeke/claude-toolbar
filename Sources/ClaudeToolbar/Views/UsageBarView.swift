@@ -19,6 +19,8 @@ struct UsageCardView: View {
     var todayTotal: PeriodUsage? = nil
     /// true = el límite fue calibrado automáticamente desde datos de rate limit reales.
     var isCalibrated: Bool = false
+    /// Momento exacto en que se resetea el período. Muestra countdown en el header. nil = no mostrar.
+    var resetTime: Date? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -55,12 +57,26 @@ struct UsageCardView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.primary)
             Spacer()
-            if let last = usage?.relativeLastActivity {
+            if let rt = resetTime, let countdown = formattedCountdown(to: rt) {
+                Text("\(lm.s(.resetsIn)) \(countdown)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            } else if let last = usage?.relativeLastActivity {
                 Text(last)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private func formattedCountdown(to date: Date) -> String? {
+        let diff = date.timeIntervalSince(Date.now)
+        guard diff > 0 else { return nil }
+        let totalMin = Int(diff / 60)
+        if totalMin < 60 { return "~\(totalMin)m" }
+        let hrs  = totalMin / 60
+        let mins = totalMin % 60
+        return mins > 0 ? "~\(hrs)h \(mins)m" : "~\(hrs)h"
     }
 
     private func metricsRow(_ u: PeriodUsage) -> some View {

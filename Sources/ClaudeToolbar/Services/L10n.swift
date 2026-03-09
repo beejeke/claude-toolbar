@@ -52,6 +52,8 @@ enum L10nKey {
     case apiRefNote, lastUpdated
     // Calibration
     case calibrated
+    // Reset countdown
+    case resetsIn
 }
 
 // MARK: - Localization manager
@@ -118,6 +120,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "Ref. API: Anthropic public pricing",
             .lastUpdated:          "Updated",
             .calibrated:           "calibrated",
+            .resetsIn:             "resets in",
         ],
 
         .spanish: [
@@ -162,6 +165,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "Ref. API: precios Anthropic públicos",
             .lastUpdated:          "Actualizado",
             .calibrated:           "calibrado",
+            .resetsIn:             "se restablece en",
         ],
 
         .japanese: [
@@ -206,6 +210,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "参考API: Anthropic公開価格",
             .lastUpdated:          "更新済み",
             .calibrated:           "キャリブ済み",
+            .resetsIn:             "リセットまで",
         ],
 
         .chinese: [
@@ -250,6 +255,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "参考API: Anthropic公开定价",
             .lastUpdated:          "已更新",
             .calibrated:           "已校准",
+            .resetsIn:             "重置于",
         ],
 
         .italian: [
@@ -294,6 +300,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "Rif. API: prezzi pubblici Anthropic",
             .lastUpdated:          "Aggiornato",
             .calibrated:           "calibrato",
+            .resetsIn:             "ripristino tra",
         ],
 
         .french: [
@@ -338,6 +345,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "Réf. API: tarifs publics Anthropic",
             .lastUpdated:          "Mis à jour",
             .calibrated:           "calibré",
+            .resetsIn:             "réinitialise dans",
         ],
 
         .german: [
@@ -382,6 +390,7 @@ final class LocalizationManager: ObservableObject {
             .apiRefNote:           "API-Ref.: öffentliche Anthropic-Preise",
             .lastUpdated:          "Aktualisiert",
             .calibrated:           "kalibriert",
+            .resetsIn:             "zurückgesetzt in",
         ],
     ]
 }

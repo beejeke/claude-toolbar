@@ -10,15 +10,18 @@ actor CLIUsageService {
     func fetchUsageData() async -> CLIUsageData {
         let entries = readAllEntries()
         guard !entries.isEmpty else {
-            return CLIUsageData(currentSession: nil, windowUsage: nil, todayTotal: nil,
-                                weekTotal: nil, dailyHistory: [], sessionTokensPerHour: nil,
+            let now = Date.now
+            return CLIUsageData(currentSession: nil, windowUsage: nil,
+                                windowStartTime: now.addingTimeInterval(-5 * 3600),
+                                todayTotal: nil, weekTotal: nil,
+                                weeklyStartTime: now.addingTimeInterval(-7 * 24 * 3600),
+                                dailyHistory: [], sessionTokensPerHour: nil,
                                 rateLimitInfo: nil, calibratedWindowLimit: nil)
         }
 
         let now = Date.now
         let cal = Calendar.current
         let startOfToday = cal.startOfDay(for: now)
-        let startOfWeek  = cal.date(byAdding: .day, value: -7, to: startOfToday) ?? startOfToday
 
         // Sesion actual: bloque de actividad continua mas reciente.
         // Se considera "nueva sesion" cuando hay un gap > 30 min entre mensajes consecutivos.
@@ -39,18 +42,19 @@ actor CLIUsageService {
             return Double(realTokens) / elapsedHours
         }
 
-        // Ventana real de Claude Code:
-        // NO es un rolling de 5h desde ahora. Claude arranca una ventana de 5h exactas
-        // desde el primer mensaje enviado; la siguiente ventana comienza solo cuando llega
-        // un mensaje tras haber expirado la ventana anterior.
-        // Detectamos el inicio real escaneando todos los timestamps en orden.
+        // Ventana de 5h: Claude arranca una ventana exacta desde el primer mensaje;
+        // la siguiente solo comienza cuando llega un mensaje tras expirar la anterior.
         let windowStartTime = detectWindowStart(from: entries)
         let windowEntries   = entries.filter { ($0.timestamp ?? .distantPast) >= windowStartTime }
 
         let todayEntries = entries.filter { ($0.timestamp ?? .distantPast) >= startOfToday }
-        let weekEntries  = entries.filter { ($0.timestamp ?? .distantPast) >= startOfWeek }
 
-        // Historial diario: últimos 7 días calendario, orden ascendente
+        // Ciclo semanal: 7 días exactos desde el primer timestamp JSONL del usuario.
+        // Avanzamos en ciclos de 7d hasta encontrar el inicio del ciclo actual.
+        let weeklyStartTime = detectWeeklyStart(from: entries, now: now)
+        let weekEntries     = entries.filter { ($0.timestamp ?? .distantPast) >= weeklyStartTime }
+
+        // Historial diario: últimos 7 días calendario desde hoy, orden ascendente
         let emptyUsage = PeriodUsage(
             inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
             messageCount: 0, sessionCount: 0, model: nil, startTime: nil, lastActivity: nil
@@ -85,8 +89,10 @@ actor CLIUsageService {
         return CLIUsageData(
             currentSession:        currentSession,
             windowUsage:           windowEntries.isEmpty ? nil : aggregate(windowEntries),
+            windowStartTime:       windowStartTime,
             todayTotal:            todayEntries.isEmpty  ? nil : aggregate(todayEntries),
             weekTotal:             weekEntries.isEmpty   ? nil : aggregate(weekEntries),
+            weeklyStartTime:       weeklyStartTime,
             dailyHistory:          dailyHistory,
             sessionTokensPerHour:  sessionTokensPerHour,
             rateLimitInfo:         rateLimitInfo,
@@ -182,6 +188,23 @@ actor CLIUsageService {
             }
         }
         return windowStart
+    }
+
+    /// Detecta el inicio del ciclo semanal activo.
+    ///
+    /// El ciclo semanal comienza con el primer mensaje JSONL del usuario y avanza
+    /// en bloques exactos de 7 días. Devuelve el inicio del bloque actual.
+    private func detectWeeklyStart(from entries: [Entry], now: Date) -> Date {
+        let timestamps = entries.compactMap(\.timestamp).sorted()
+        guard let firstEver = timestamps.first else {
+            return now.addingTimeInterval(-7 * 24 * 3600)
+        }
+        let weekDuration: TimeInterval = 7 * 24 * 3600
+        var weekStart = firstEver
+        while weekStart.addingTimeInterval(weekDuration) <= now {
+            weekStart = weekStart.addingTimeInterval(weekDuration)
+        }
+        return weekStart
     }
 
     // MARK: - Session detection
